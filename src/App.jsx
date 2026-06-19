@@ -174,7 +174,7 @@ function Splash() {
     <div style={{ ...S.root, display: "grid", placeItems: "center" }}>
       <style>{CSS}</style>
       <div style={{ textAlign: "center" }}>
-        <div style={S.logoMark}>OP</div>
+        <img src="/icono-512.png" alt="Centro de Operaciones" style={S.logoMark} />
         <p style={{ color: "var(--muted)", marginTop: 16, letterSpacing: 2, fontSize: 12 }}>CARGANDO…</p>
       </div>
     </div>
@@ -221,7 +221,7 @@ function Login() {
 
   return (
     <div style={S.loginCard}>
-      <div style={S.logoMark}>OP</div>
+      <img src="/icono-512.png" alt="Centro de Operaciones" style={S.logoMark} />
       <h1 style={S.loginTitle}>Centro de Operaciones</h1>
       <p style={S.loginSub}>Control y seguimiento de actividades</p>
 
@@ -270,7 +270,7 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
   return (
     <div style={S.topbar}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={S.logoMarkSm}>OP</div>
+        <img src="/icono-512.png" alt="Centro de Operaciones" style={S.logoMarkSm} />
         <div>
           <div style={S.topName}>{profile.nombre}</div>
           <div style={S.topRole}>
@@ -922,7 +922,7 @@ function Empty({ text, mini }) {
 function Footer() {
   return (
     <div style={S.footer}>
-      <img src="/logo-stm.png" alt="Simple Task Manager" style={S.footerLogo} />
+      <img src="/logo-op.png" alt="Centro de Operaciones" style={S.footerLogo} />
       <div style={S.footerText}>All rights reserved · Aldox Networks © 2026</div>
     </div>
   );
@@ -933,8 +933,8 @@ const S = {
   root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--body)" },
   appWrap: { minHeight: "100vh" },
   bareWrap: { minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 },
-  logoMark: { width: 64, height: 64, borderRadius: 14, background: "linear-gradient(135deg,var(--accent),#b45309)", color: "#1a1a1a", display: "grid", placeItems: "center", fontFamily: "var(--display)", fontWeight: 800, fontSize: 26, letterSpacing: 1, margin: "0 auto" },
-  logoMarkSm: { width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,var(--accent),#b45309)", color: "#1a1a1a", display: "grid", placeItems: "center", fontFamily: "var(--display)", fontWeight: 800, fontSize: 15 },
+  logoMark: { width: 64, height: 64, borderRadius: 14, display: "block", margin: "0 auto" },
+  logoMarkSm: { width: 38, height: 38, borderRadius: 10, display: "block" },
   loginCard: { width: "100%", maxWidth: 380, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 32 },
   loginTitle: { fontFamily: "var(--display)", fontSize: 26, fontWeight: 700, textAlign: "center", margin: "18px 0 4px" },
   loginSub: { textAlign: "center", color: "var(--muted)", fontSize: 13, margin: "0 0 24px" },
@@ -1040,7 +1040,7 @@ const S = {
   modalActions: { display: "flex", gap: 12, marginTop: 22 },
   empty: { gridColumn: "1/-1", textAlign: "center", border: "1.5px dashed var(--line)", borderRadius: 14 },
   footer: { marginTop: 36, paddingTop: 24, borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, opacity: 0.85 },
-  footerLogo: { width: 88, height: "auto", borderRadius: 10, background: "#f0f1f4", padding: 8, boxSizing: "border-box" },
+  footerLogo: { width: 44, height: 44, display: "block" },
   footerText: { fontSize: 11.5, color: "var(--muted)", letterSpacing: 0.3, textAlign: "center" },
 };
 
