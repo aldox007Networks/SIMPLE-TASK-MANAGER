@@ -352,6 +352,7 @@ function AdminApp({ profile }) {
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "companies" && <Companies {...shared} />}
           {tab === "team" && <Team {...shared} />}
+          <Footer />
         </main>
       </div>
     </>
@@ -851,6 +852,7 @@ function MemberApp({ profile }) {
         <TopBar {...shared} onOpenActivity={setOpenActId} />
         <div style={S.body} className="appbody"><main style={{ ...S.main, marginLeft: 0 }} className="main">
           <ActivityDetail activity={act} companies={data.companies} users={data.users} profile={profile} reload={data.reload} isAdmin={false} onBack={() => setOpenActId(null)} />
+          <Footer />
         </main></div>
       </>
     );
@@ -873,6 +875,7 @@ function MemberApp({ profile }) {
             {mine.length === 0 && <Empty text="No tienes actividades asignadas todavía." />}
             {mine.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
           </div>
+          <Footer />
         </main>
       </div>
     </>
@@ -914,6 +917,15 @@ function Modal({ title, children, onClose }) {
 }
 function Empty({ text, mini }) {
   return <div style={{ ...S.empty, padding: mini ? "20px" : "48px 24px" }}><ClipboardList size={mini ? 20 : 32} color="var(--muted)" /><p style={{ margin: "8px 0 0", color: "var(--muted)", fontSize: 13 }}>{text}</p></div>;
+}
+
+function Footer() {
+  return (
+    <div style={S.footer}>
+      <img src="/logo-stm.png" alt="Simple Task Manager" style={S.footerLogo} />
+      <div style={S.footerText}>All rights reserved · Aldox Networks © 2026</div>
+    </div>
+  );
 }
 
 // ============ ESTILOS ============
@@ -1027,6 +1039,9 @@ const S = {
   modalBody: { padding: 20 },
   modalActions: { display: "flex", gap: 12, marginTop: 22 },
   empty: { gridColumn: "1/-1", textAlign: "center", border: "1.5px dashed var(--line)", borderRadius: 14 },
+  footer: { marginTop: 36, paddingTop: 24, borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, opacity: 0.85 },
+  footerLogo: { width: 88, height: "auto", borderRadius: 10, background: "#f0f1f4", padding: 8, boxSizing: "border-box" },
+  footerText: { fontSize: 11.5, color: "var(--muted)", letterSpacing: 0.3, textAlign: "center" },
 };
 
 const CSS = `
