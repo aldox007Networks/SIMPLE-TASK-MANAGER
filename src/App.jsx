@@ -181,14 +181,21 @@ function Splash() {
   );
 }
 
-// ============ LOGIN / REGISTRO ============
+// ============ LOGIN ============
 function Login() {
-  const [mode, setMode] = useState("login"); // login | signup
+  const [mode, setMode] = useState("login"); // login | setup
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [adminExists, setAdminExists] = useState(true);
+
+  // ¿Ya existe algún perfil? Si no, permitimos crear el primer administrador.
+  useEffect(() => {
+    supabase.from("perfiles").select("*", { count: "exact", head: true })
+      .then(({ count }) => setAdminExists((count || 0) > 0));
+  }, []);
 
   const submit = async () => {
     setErr(""); setBusy(true);
@@ -196,20 +203,18 @@ function Login() {
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pass });
       if (error) setErr("Correo o contraseña incorrectos.");
     } else {
-      // El PRIMER usuario que se registra queda como admin si no hay ninguno
-      const { count } = await supabase.from("perfiles").select("*", { count: "exact", head: true });
-      const rol = (count || 0) === 0 ? "admin" : "member";
+      // Configuración inicial: crea el primer administrador (solo si no existe ninguno)
       const nombre = name.trim() || email.trim();
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(), password: pass,
-        options: { data: { nombre, rol } },
+        options: { data: { nombre, rol: "admin" } },
       });
       if (error) { setErr(error.message); setBusy(false); return; }
-      // La app crea el perfil directamente (no dependemos del trigger de la base de datos)
       if (data?.user) {
-        await supabase.from("perfiles").upsert({ id: data.user.id, nombre, rol }, { onConflict: "id" });
+        await supabase.from("perfiles").upsert({ id: data.user.id, nombre, rol: "admin" }, { onConflict: "id" });
       }
-      setErr("Cuenta creada. Ya puedes iniciar sesión.");
+      setErr("Administrador creado. Ya puedes iniciar sesión.");
+      setMode("login");
     }
     setBusy(false);
   };
@@ -220,7 +225,7 @@ function Login() {
       <h1 style={S.loginTitle}>Centro de Operaciones</h1>
       <p style={S.loginSub}>Control y seguimiento de actividades</p>
 
-      {mode === "signup" && (
+      {mode === "setup" && (
         <>
           <label style={S.label}>Nombre completo</label>
           <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Tu nombre" />
@@ -236,14 +241,16 @@ function Login() {
       {err && <div style={S.errBox}><AlertCircle size={14} /> {err}</div>}
 
       <button style={{ ...S.btnPrimary, marginTop: 16, opacity: busy ? 0.6 : 1 }} onClick={submit} disabled={busy}>
-        {busy ? "Procesando…" : mode === "login" ? "Entrar" : "Crear cuenta"}
+        {busy ? "Procesando…" : mode === "login" ? "Entrar" : "Crear administrador"}
       </button>
 
-      <p style={S.hint}>
-        {mode === "login"
-          ? <>¿Primer uso? <button style={S.linkBtn} onClick={() => { setMode("signup"); setErr(""); }}>Crea la cuenta de administrador</button></>
-          : <>¿Ya tienes cuenta? <button style={S.linkBtn} onClick={() => { setMode("login"); setErr(""); }}>Inicia sesión</button></>}
-      </p>
+      {!adminExists && (
+        <p style={S.hint}>
+          {mode === "login"
+            ? <>¿Primera vez? <button style={S.linkBtn} onClick={() => { setMode("setup"); setErr(""); }}>Configura la cuenta de administrador</button></>
+            : <>¿Ya la creaste? <button style={S.linkBtn} onClick={() => { setMode("login"); setErr(""); }}>Inicia sesión</button></>}
+        </p>
+      )}
     </div>
   );
 }
@@ -757,17 +764,44 @@ function Companies({ companies, activities, reload }) {
 }
 
 // ============ EQUIPO ============
-function Team({ users, activities }) {
+function Team({ users, activities, reload }) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
   const members = users.filter((u) => u.rol === "member");
+
+  const save = async () => {
+    setErr(""); setOkMsg("");
+    if (!name.trim() || !email.trim() || !pass.trim()) { setErr("Completa todos los campos."); return; }
+    if (pass.trim().length < 6) { setErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    setBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke("crear-integrante", {
+        body: { nombre: name.trim(), email: email.trim(), password: pass.trim() },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error || data?.error) { setErr(data?.error || "No se pudo crear el integrante."); setBusy(false); return; }
+      setOkMsg(`Integrante creado. Comparte estos datos: correo ${email.trim()} y la contraseña que asignaste.`);
+      setName(""); setEmail(""); setPass(""); setAdding(false); reload();
+    } catch (e) {
+      setErr("Error de conexión con el servidor.");
+    }
+    setBusy(false);
+  };
+
   return (
     <div>
-      <PageHead title="Equipo de trabajo" sub="Integrantes que ejecutan las actividades" />
-      <div style={S.infoBox}>
-        <AlertCircle size={16} />
-        <span>Para agregar un integrante, pídele que abra la app y use <b>“Crea la cuenta”</b> con su correo. Aparecerá aquí automáticamente y podrás asignarle actividades.</span>
-      </div>
+      <PageHead title="Equipo de trabajo" sub="Integrantes que ejecutan las actividades"
+        action={<button style={S.btnPrimary} onClick={() => { setAdding(true); setOkMsg(""); }}><Plus size={16} /> Agregar integrante</button>} />
+      {okMsg && <div style={{ ...S.infoBox, background: "rgba(34,197,94,.1)", borderColor: "rgba(34,197,94,.3)", color: "var(--green)" }}><Check size={16} /><span>{okMsg}</span></div>}
       <div style={S.cardGrid}>
-        {members.length === 0 && <Empty text="Aún no hay integrantes registrados." />}
+        {members.length === 0 && <Empty text="Aún no hay integrantes. Usa 'Agregar integrante' para crear sus cuentas." />}
         {members.map((m) => {
           const assigned = activities.filter((a) => a.assignedTo === m.id);
           const doneN = assigned.filter((a) => a.progress >= 100).length;
@@ -782,6 +816,22 @@ function Team({ users, activities }) {
           );
         })}
       </div>
+      {adding && (
+        <Modal title="Agregar integrante" onClose={() => setAdding(false)}>
+          <label style={S.label}>Nombre completo</label>
+          <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Juan Pérez" />
+          <label style={S.label}>Correo</label>
+          <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="juan@correo.com" />
+          <label style={S.label}>Contraseña temporal</label>
+          <input style={S.input} value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Mínimo 6 caracteres" />
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Comparte el correo y esta contraseña con el integrante. Podrá cambiarla después.</p>
+          {err && <div style={S.errBox}><AlertCircle size={14} /> {err}</div>}
+          <div style={S.modalActions}>
+            <button style={S.btnGhost} onClick={() => setAdding(false)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={save} disabled={busy}>{busy ? "Creando…" : "Crear integrante"}</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
