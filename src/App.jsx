@@ -57,8 +57,19 @@ export default function App() {
 
   useEffect(() => {
     if (!session) { setProfile(null); return; }
-    supabase.from("perfiles").select("*").eq("id", session.user.id).single()
-      .then(({ data }) => setProfile(data));
+    (async () => {
+      const { data } = await supabase.from("perfiles").select("*").eq("id", session.user.id).single();
+      if (data) { setProfile(data); return; }
+      // Red de seguridad: si el usuario no tiene perfil, lo creamos ahora
+      const meta = session.user.user_metadata || {};
+      const { count } = await supabase.from("perfiles").select("*", { count: "exact", head: true });
+      const rol = meta.rol || ((count || 0) === 0 ? "admin" : "member");
+      const nombre = meta.nombre || session.user.email;
+      const { data: nuevo } = await supabase.from("perfiles")
+        .upsert({ id: session.user.id, nombre, rol }, { onConflict: "id" })
+        .select().single();
+      setProfile(nuevo);
+    })();
   }, [session]);
 
   if (loading) return <Splash />;
@@ -188,12 +199,17 @@ function Login() {
       // El PRIMER usuario que se registra queda como admin si no hay ninguno
       const { count } = await supabase.from("perfiles").select("*", { count: "exact", head: true });
       const rol = (count || 0) === 0 ? "admin" : "member";
-      const { error } = await supabase.auth.signUp({
+      const nombre = name.trim() || email.trim();
+      const { data, error } = await supabase.auth.signUp({
         email: email.trim(), password: pass,
-        options: { data: { nombre: name.trim() || email.trim(), rol } },
+        options: { data: { nombre, rol } },
       });
-      if (error) setErr(error.message);
-      else setErr("Cuenta creada. Si pide confirmar correo, revisa tu bandeja; si no, ya puedes entrar.");
+      if (error) { setErr(error.message); setBusy(false); return; }
+      // La app crea el perfil directamente (no dependemos del trigger de la base de datos)
+      if (data?.user) {
+        await supabase.from("perfiles").upsert({ id: data.user.id, nombre, rol }, { onConflict: "id" });
+      }
+      setErr("Cuenta creada. Ya puedes iniciar sesión.");
     }
     setBusy(false);
   };
