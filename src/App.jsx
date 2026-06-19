@@ -338,16 +338,16 @@ function AdminApp({ profile }) {
   return (
     <>
       <TopBar {...shared} onOpenActivity={openActivity} />
-      <div style={S.body}>
-        <nav style={S.sidenav}>
+      <div style={S.body} className="appbody">
+        <nav style={S.sidenav} className="sidenav">
           {tabs.map((t) => (
-            <button key={t.id} style={tab === t.id ? S.navItemActive : S.navItem}
+            <button key={t.id} style={tab === t.id ? S.navItemActive : S.navItem} className="navitem"
               onClick={() => { setTab(t.id); setOpenActId(null); }}>
               <t.icon size={18} /> <span className="navlabel">{t.label}</span>
             </button>
           ))}
         </nav>
-        <main style={S.main}>
+        <main style={S.main} className="main">
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "companies" && <Companies {...shared} />}
@@ -411,7 +411,7 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
       {needApproval > 0 && (
         <div style={S.alertStrip}><ThumbsUp size={16} /><span><b>{needApproval}</b> actividad(es) esperan tu visto bueno.</span></div>
       )}
-      <div style={S.twoCol}>
+      <div style={S.twoCol} className="twocol">
         <div style={S.panel}>
           <h3 style={S.panelTitle}>Distribución de estados</h3>
           <BarRow label="Pendientes" value={pending} total={total} color="var(--muted)" />
@@ -431,7 +431,7 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
             <h3 style={S.panelTitle}>Reportes personalizados</h3>
             <button style={S.btnSm} onClick={exportReport} disabled={!filtered.length}><Download size={14} /> Exportar CSV</button>
           </div>
-          <div style={S.filterRow}>
+          <div style={S.filterRow} className="filterrow">
             <select style={S.select} value={repCompany} onChange={(e) => setRepCompany(e.target.value)}>
               <option value="all">Todas las empresas</option>
               {companies.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -645,7 +645,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   return (
     <div>
       <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
-      <div style={S.detailHead}>
+      <div style={S.detailHead} className="detailhead">
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
             <StatusPill status={status} />
@@ -849,7 +849,7 @@ function MemberApp({ profile }) {
     if (act) return (
       <>
         <TopBar {...shared} onOpenActivity={setOpenActId} />
-        <div style={S.body}><main style={{ ...S.main, marginLeft: 0 }}>
+        <div style={S.body} className="appbody"><main style={{ ...S.main, marginLeft: 0 }} className="main">
           <ActivityDetail activity={act} companies={data.companies} users={data.users} profile={profile} reload={data.reload} isAdmin={false} onBack={() => setOpenActId(null)} />
         </main></div>
       </>
@@ -861,8 +861,8 @@ function MemberApp({ profile }) {
   return (
     <>
       <TopBar {...shared} onOpenActivity={setOpenActId} />
-      <div style={S.body}>
-        <main style={{ ...S.main, marginLeft: 0 }}>
+      <div style={S.body} className="appbody">
+        <main style={{ ...S.main, marginLeft: 0 }} className="main">
           <PageHead title={`Hola, ${profile.nombre.split(" ")[0]}`} sub="Tus actividades asignadas" />
           <div style={S.kpiGrid}>
             <KpiCard icon={ClipboardList} label="Asignadas" value={mine.length} tone="accent" />
@@ -1043,5 +1043,27 @@ button:hover{filter:brightness(1.08)}
 input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
-@media(max-width:720px){ .navlabel{display:none} }
+@media(max-width:760px){
+  /* El menú lateral pasa a ser barra inferior fija */
+  .appbody{ display:block !important; }
+  .sidenav{
+    position:fixed !important; bottom:0; left:0; right:0; top:auto !important;
+    width:100% !important; min-height:0 !important;
+    display:flex !important; flex-direction:row !important;
+    justify-content:space-around; align-items:center;
+    padding:6px 4px !important; gap:2px;
+    border-right:none !important; border-top:1px solid var(--line);
+    z-index:60; box-sizing:border-box;
+  }
+  .navitem, .navitem.active{ flex-direction:column !important; gap:3px !important;
+    font-size:10px !important; padding:7px 4px !important; margin:0 !important;
+    flex:1; text-align:center !important; justify-content:center !important; }
+  .navlabel{ display:block !important; font-size:10px; }
+  .main{ padding:16px !important; padding-bottom:84px !important; max-width:100% !important; }
+  /* Columnas dobles se apilan */
+  .twocol{ grid-template-columns:1fr !important; }
+  .filterrow{ grid-template-columns:1fr !important; }
+  .detailhead{ flex-direction:column !important; align-items:flex-start !important; }
+  .topbar{ padding:0 14px !important; }
+}
 `;
