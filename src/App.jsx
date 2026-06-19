@@ -403,7 +403,7 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
   return (
     <div>
       <PageHead title="Panel de control" sub="Resumen general de actividades y avances" />
-      <div style={S.kpiGrid}>
+      <div style={S.kpiGrid} className="kpigrid">
         <KpiCard icon={ClipboardList} label="Actividades totales" value={total} tone="accent" />
         <KpiCard icon={TrendingUp} label="Avance promedio" value={avg + "%"} tone="blue" />
         <KpiCard icon={Clock} label="En progreso" value={inProgress} tone="amber" />
@@ -487,7 +487,7 @@ function AdminActivities({ activities, setOpenActId, openActId, companies, users
       {(!members.length || !companies.length) && (
         <div style={S.alertStrip}><AlertCircle size={16} /><span>Para crear actividades primero registra al menos una <b>empresa</b> y un <b>integrante</b>.</span></div>
       )}
-      <div style={S.cardGrid}>
+      <div style={S.cardGrid} className="cardgrid">
         {activities.length === 0 && <Empty text="Sin actividades. Crea la primera para empezar." />}
         {activities.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => setOpenActId(a.id)} />)}
       </div>
@@ -728,7 +728,7 @@ function Companies({ companies, activities, reload }) {
     <div>
       <PageHead title="Catálogo de empresas" sub="Lugares donde se ejecutan las actividades"
         action={<button style={S.btnPrimary} onClick={() => setAdding(true)}><Plus size={16} /> Agregar empresa</button>} />
-      <div style={S.cardGrid}>
+      <div style={S.cardGrid} className="cardgrid">
         {companies.length === 0 && <Empty text="Sin empresas registradas." />}
         {companies.map((c) => {
           const count = activities.filter((a) => a.companyId === c.id).length;
@@ -801,7 +801,7 @@ function Team({ users, activities, reload }) {
       <PageHead title="Equipo de trabajo" sub="Integrantes que ejecutan las actividades"
         action={<button style={S.btnPrimary} onClick={() => { setAdding(true); setOkMsg(""); }}><Plus size={16} /> Agregar integrante</button>} />
       {okMsg && <div style={{ ...S.infoBox, background: "rgba(34,197,94,.1)", borderColor: "rgba(34,197,94,.3)", color: "var(--green)" }}><Check size={16} /><span>{okMsg}</span></div>}
-      <div style={S.cardGrid}>
+      <div style={S.cardGrid} className="cardgrid">
         {members.length === 0 && <Empty text="Aún no hay integrantes. Usa 'Agregar integrante' para crear sus cuentas." />}
         {members.map((m) => {
           const assigned = activities.filter((a) => a.assignedTo === m.id);
@@ -866,12 +866,12 @@ function MemberApp({ profile }) {
       <div style={S.body} className="appbody">
         <main style={{ ...S.main, marginLeft: 0 }} className="main">
           <PageHead title={`Hola, ${profile.nombre.split(" ")[0]}`} sub="Tus actividades asignadas" />
-          <div style={S.kpiGrid}>
+          <div style={S.kpiGrid} className="kpigrid">
             <KpiCard icon={ClipboardList} label="Asignadas" value={mine.length} tone="accent" />
             <KpiCard icon={Clock} label="Por completar" value={pending.length} tone="amber" />
             <KpiCard icon={CheckCircle2} label="Completadas" value={done.length} tone="green" />
           </div>
-          <div style={S.cardGrid}>
+          <div style={S.cardGrid} className="cardgrid">
             {mine.length === 0 && <Empty text="No tienes actividades asignadas todavía." />}
             {mine.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
           </div>
@@ -1052,7 +1052,8 @@ const CSS = `
 }
 @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;600;700&display=swap');
 *{margin:0;box-sizing:border-box}
-body{margin:0}
+html,body{margin:0;max-width:100%;overflow-x:hidden}
+img{max-width:100%}
 button:hover{filter:brightness(1.08)}
 .actCard:hover{border-color:var(--accent)!important}
 input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
@@ -1080,5 +1081,8 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
   .filterrow{ grid-template-columns:1fr !important; }
   .detailhead{ flex-direction:column !important; align-items:flex-start !important; }
   .topbar{ padding:0 14px !important; }
+  /* Evitar desbordes: rejillas a una columna en móvil */
+  .cardgrid{ grid-template-columns:1fr !important; }
+  .kpigrid{ grid-template-columns:1fr 1fr !important; }
 }
 `;
