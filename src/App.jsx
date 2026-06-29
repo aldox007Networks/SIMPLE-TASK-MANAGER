@@ -11,18 +11,23 @@ import {
 const fmtDate = (ts) =>
   new Date(ts).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
-function compressImage(file, maxW = 1000, quality = 0.6) {
+function compressImage(file, maxW = 1400, quality = 0.7) {
   return new Promise((resolve) => {
+    // Si no es una imagen que el canvas pueda procesar, devolvemos el archivo tal cual
     const reader = new FileReader();
+    reader.onerror = () => resolve(null);
     reader.onload = (e) => {
       const img = new window.Image();
+      img.onerror = () => resolve(null); // p.ej. HEIC que el navegador no decodifica
       img.onload = () => {
-        const scale = Math.min(1, maxW / img.width);
-        const c = document.createElement("canvas");
-        c.width = img.width * scale;
-        c.height = img.height * scale;
-        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        c.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+        try {
+          const scale = Math.min(1, maxW / img.width);
+          const c = document.createElement("canvas");
+          c.width = Math.round(img.width * scale);
+          c.height = Math.round(img.height * scale);
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+        } catch { resolve(null); }
       };
       img.src = e.target.result;
     };
@@ -30,14 +35,22 @@ function compressImage(file, maxW = 1000, quality = 0.6) {
   });
 }
 
-// Sube una foto al bucket "fotos" y devuelve su URL pública
+// Sube una foto al bucket "fotos" y devuelve { url } o { error }
 async function uploadPhoto(file) {
-  const blob = await compressImage(file);
-  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
-  const { error } = await supabase.storage.from("fotos").upload(name, blob, { contentType: "image/jpeg" });
-  if (error) { console.error(error); return null; }
+  // 1) Intentamos comprimir; si falla (HEIC, etc.), usamos el archivo original
+  let blob = await compressImage(file);
+  let ext = "jpg";
+  let contentType = "image/jpeg";
+  if (!blob) {
+    blob = file;
+    contentType = file.type || "application/octet-stream";
+    ext = (file.name?.split(".").pop() || "jpg").toLowerCase().slice(0, 5);
+  }
+  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await supabase.storage.from("fotos").upload(name, blob, { contentType, upsert: false });
+  if (error) { console.error("Error al subir foto:", error); return { error: error.message || "No se pudo subir la foto" }; }
   const { data } = supabase.storage.from("fotos").getPublicUrl(name);
-  return data.publicUrl;
+  return { url: data.publicUrl };
 }
 
 // ============ APP ============
@@ -282,7 +295,7 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
         <div ref={ref} style={{ position: "relative" }}>
           <button style={S.iconBtn} onClick={() => setOpen((o) => !o)}>
             <Bell size={18} />
-            {unread > 0 && <span style={S.badge}>{unread}</span>}
+            {unread > 0 && <span style={S.badge}>{unread > 9 ? "9+" : unread}</span>}
           </button>
           {open && (
             <div style={S.notifPanel}>
@@ -348,6 +361,11 @@ function AdminApp({ profile }) {
           ))}
         </nav>
         <main style={S.main} className="main">
+          {tab !== "dash" && !openActId && (
+            <button style={S.backBtn} onClick={() => setTab("dash")}>
+              <ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver al panel
+            </button>
+          )}
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "companies" && <Companies {...shared} />}
@@ -534,11 +552,16 @@ function ActivityForm({ companies, members, onClose, onSave }) {
   const [photos, setPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [photoErr, setPhotoErr] = useState("");
 
   const addPhotos = async (files) => {
-    setBusy(true);
+    setBusy(true); setPhotoErr("");
     const arr = [];
-    for (const f of Array.from(files).slice(0, 6)) { const url = await uploadPhoto(f); if (url) arr.push(url); }
+    for (const f of Array.from(files).slice(0, 6)) {
+      const r = await uploadPhoto(f);
+      if (r.url) arr.push(r.url);
+      else if (r.error) setPhotoErr("No se pudo subir una foto: " + r.error);
+    }
     setPhotos((p) => [...p, ...arr].slice(0, 8));
     setBusy(false);
   };
@@ -549,7 +572,7 @@ function ActivityForm({ companies, members, onClose, onSave }) {
       <input style={S.input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ej. Instalación de red en sucursal norte" />
       <label style={S.label}>Descripción detallada</label>
       <textarea style={S.textarea} rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Alcance, materiales, condiciones y resultado esperado…" />
-      <div style={S.formRow}>
+      <div style={S.formRow} className="formrow">
         <div style={{ flex: 1 }}>
           <label style={S.label}>Empresa</label>
           <select style={S.select} value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
@@ -565,6 +588,7 @@ function ActivityForm({ companies, members, onClose, onSave }) {
       </div>
       <label style={S.label}>Fotos de referencia</label>
       <PhotoUploader photos={photos} setPhotos={setPhotos} addPhotos={addPhotos} busy={busy} />
+      {photoErr && <div style={S.errBox}><AlertCircle size={14} /> {photoErr}</div>}
       <div style={S.modalActions}>
         <button style={S.btnGhost} onClick={onClose}>Cancelar</button>
         <button style={S.btnPrimary} disabled={!title.trim() || !companyId || !assignedTo || saving || busy}
@@ -611,11 +635,16 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const [photos, setPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [photoErr, setPhotoErr] = useState("");
 
   const addPhotos = async (files) => {
-    setBusy(true);
+    setBusy(true); setPhotoErr("");
     const arr = [];
-    for (const f of Array.from(files).slice(0, 4)) { const url = await uploadPhoto(f); if (url) arr.push(url); }
+    for (const f of Array.from(files).slice(0, 4)) {
+      const r = await uploadPhoto(f);
+      if (r.url) arr.push(r.url);
+      else if (r.error) setPhotoErr("No se pudo subir una foto: " + r.error);
+    }
     setPhotos((p) => [...p, ...arr].slice(0, 6));
     setBusy(false);
   };
@@ -681,9 +710,10 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
           <h3 style={S.panelTitle}><Send size={14} /> Reportar avance</h3>
           <textarea style={S.textarea} rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Describe lo realizado, observaciones o pendientes…" />
           <PhotoUploader photos={photos} setPhotos={setPhotos} addPhotos={addPhotos} busy={busy} />
+          {photoErr && <div style={S.errBox}><AlertCircle size={14} /> {photoErr}</div>}
           <label style={S.label}>Porcentaje de avance: <b style={{ color: "var(--accent)" }}>{pct}%</b></label>
           <input type="range" min={0} max={100} step={5} value={pct} onChange={(e) => setPct(Number(e.target.value))} style={S.range} />
-          <div style={S.updateActions}>
+          <div style={S.updateActions} className="actionrow">
             <button style={S.btnGhost} onClick={requestApproval} disabled={a.approvalRequested}><ThumbsUp size={15} /> {a.approvalRequested ? "V°B° solicitado" : "Solicitar visto bueno"}</button>
             <button style={S.btnPrimary} onClick={submitUpdate} disabled={saving || busy}>{saving ? "Guardando…" : pct >= 100 ? "Marcar 100% y notificar" : "Guardar avance"}</button>
           </div>
@@ -955,7 +985,7 @@ const S = {
   topRole: { fontSize: 11, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 },
   iconBtn: { position: "relative", width: 40, height: 40, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--line)", color: "var(--text)", display: "grid", placeItems: "center", cursor: "pointer" },
   iconBtnSm: { width: 32, height: 32, borderRadius: 8, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
-  badge: { position: "absolute", top: -4, right: -4, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 9, background: "var(--accent)", color: "#1a1a1a", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center" },
+  badge: { position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px", borderRadius: 10, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid var(--surface)", boxSizing: "content-box" },
   notifPanel: { position: "absolute", top: 48, right: 0, width: 320, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,.5)", zIndex: 100, overflow: "hidden" },
   notifHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid var(--line)", fontSize: 13, fontWeight: 700 },
   notifEmpty: { padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 },
@@ -1084,5 +1114,8 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
   /* Evitar desbordes: rejillas a una columna en móvil */
   .cardgrid{ grid-template-columns:1fr !important; }
   .kpigrid{ grid-template-columns:1fr 1fr !important; }
+  /* Botones de acción y filas de formulario se apilan */
+  .actionrow{ flex-direction:column !important; }
+  .formrow{ flex-direction:column !important; gap:0 !important; }
 }
 `;
