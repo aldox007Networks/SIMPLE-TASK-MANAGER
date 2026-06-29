@@ -4,7 +4,7 @@ import {
   Bell, LayoutDashboard, ClipboardList, Building2, Users, LogOut,
   Plus, X, Camera, Check, AlertCircle, ChevronRight, Trash2,
   TrendingUp, Clock, CheckCircle2, FileText, Image as ImageIcon,
-  ThumbsUp, Send, User, Download, Shield,
+  ThumbsUp, Send, User, Download, Shield, Pencil, Quote, ThumbsDown, Timer,
 } from "lucide-react";
 
 // ============ UTILIDADES ============
@@ -94,10 +94,41 @@ export default function App() {
 
   return (
     <Shell>
+      <FraseMotivadora />
       {profile.rol === "admin"
         ? <AdminApp profile={profile} />
         : <MemberApp profile={profile} />}
     </Shell>
+  );
+}
+
+// Muestra una frase motivadora aleatoria una vez al abrir la app
+function FraseMotivadora() {
+  const [frase, setFrase] = useState(null);
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    // Solo una vez por apertura de app (no en cada recarga de datos)
+    if (sessionStorage.getItem("fraseMostrada")) return;
+    (async () => {
+      const lista = await Api.getFrases();
+      if (lista.length) {
+        setFrase(lista[Math.floor(Math.random() * lista.length)]);
+        setShow(true);
+        sessionStorage.setItem("fraseMostrada", "1");
+      }
+    })();
+  }, []);
+
+  if (!show || !frase) return null;
+  return (
+    <div style={S.fraseOverlay} onClick={() => setShow(false)}>
+      <div style={S.fraseCard} onClick={(e) => e.stopPropagation()}>
+        <Quote size={28} color="var(--accent)" />
+        <p style={S.fraseText}>{frase.texto}</p>
+        <button style={S.btnPrimary} onClick={() => setShow(false)}>Comenzar</button>
+      </div>
+    </div>
   );
 }
 
@@ -168,7 +199,12 @@ const Api = {
     await supabase.from("actividades").update({ aprobacion_solicitada: false, aprobada: true }).eq("id", activityId);
   },
   async addCompany(c) { await supabase.from("empresas").insert(c); },
+  async updateCompany(id, c) { await supabase.from("empresas").update(c).eq("id", id); },
   async delCompany(id) { await supabase.from("empresas").delete().eq("id", id); },
+  async updateUser(id, p) { await supabase.from("perfiles").update(p).eq("id", id); },
+  async addFrase(texto) { await supabase.from("frases").insert({ texto }); },
+  async delFrase(id) { await supabase.from("frases").delete().eq("id", id); },
+  async getFrases() { const { data } = await supabase.from("frases").select("*"); return data || []; },
   async markNotifsRead(userId) { await supabase.from("notificaciones").update({ leida: true }).eq("destinatario", userId).eq("leida", false); },
   async markNotifRead(id) { await supabase.from("notificaciones").update({ leida: true }).eq("id", id); },
 };
@@ -345,6 +381,7 @@ function AdminApp({ profile }) {
     { id: "activities", label: "Actividades", icon: ClipboardList },
     { id: "companies", label: "Empresas", icon: Building2 },
     { id: "team", label: "Equipo", icon: Users },
+    { id: "frases", label: "Frases", icon: Quote },
   ];
   const shared = { ...data, profile, onLogout: logout };
 
@@ -370,6 +407,7 @@ function AdminApp({ profile }) {
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "companies" && <Companies {...shared} />}
           {tab === "team" && <Team {...shared} />}
+          {tab === "frases" && <Frases />}
           <Footer />
         </main>
       </div>
@@ -424,6 +462,7 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
       <div style={S.kpiGrid} className="kpigrid">
         <KpiCard icon={ClipboardList} label="Actividades totales" value={total} tone="accent" />
         <KpiCard icon={TrendingUp} label="Avance promedio" value={avg + "%"} tone="blue" />
+        <KpiCard icon={AlertCircle} label="Por iniciar" value={pending} tone="muted" />
         <KpiCard icon={Clock} label="En progreso" value={inProgress} tone="amber" />
         <KpiCard icon={CheckCircle2} label="Completadas" value={done} tone="green" />
       </div>
@@ -745,39 +784,49 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
 
 // ============ EMPRESAS ============
 function Companies({ companies, activities, reload }) {
-  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null); // null | 'new' | company object
   const [name, setName] = useState(""); const [contact, setContact] = useState(""); const [address, setAddress] = useState("");
+
+  const openNew = () => { setName(""); setContact(""); setAddress(""); setEditing("new"); };
+  const openEdit = (c) => { setName(c.nombre || ""); setContact(c.contacto || ""); setAddress(c.direccion || ""); setEditing(c); };
 
   const save = async () => {
     if (!name.trim()) return;
-    await Api.addCompany({ nombre: name.trim(), contacto: contact.trim(), direccion: address.trim() });
-    setName(""); setContact(""); setAddress(""); setAdding(false); reload();
+    const payload = { nombre: name.trim(), contacto: contact.trim(), direccion: address.trim() };
+    if (editing === "new") await Api.addCompany(payload);
+    else await Api.updateCompany(editing.id, payload);
+    setEditing(null); reload();
   };
+
+  // Ordenar por número de actividades (la de más carga primero)
+  const ordered = [...companies]
+    .map((c) => ({ ...c, count: activities.filter((a) => a.companyId === c.id).length }))
+    .sort((a, b) => b.count - a.count);
 
   return (
     <div>
-      <PageHead title="Catálogo de empresas" sub="Lugares donde se ejecutan las actividades"
-        action={<button style={S.btnPrimary} onClick={() => setAdding(true)}><Plus size={16} /> Agregar empresa</button>} />
+      <PageHead title="Catálogo de empresas" sub="Ordenadas por carga de actividades"
+        action={<button style={S.btnPrimary} onClick={openNew}><Plus size={16} /> Agregar empresa</button>} />
       <div style={S.cardGrid} className="cardgrid">
         {companies.length === 0 && <Empty text="Sin empresas registradas." />}
-        {companies.map((c) => {
-          const count = activities.filter((a) => a.companyId === c.id).length;
-          return (
-            <div key={c.id} style={S.entityCard}>
-              <div style={S.entityIcon}><Building2 size={20} /></div>
-              <div style={{ flex: 1 }}>
-                <h4 style={S.entityName}>{c.nombre}</h4>
-                {c.contacto && <div style={S.entityMeta}>{c.contacto}</div>}
-                {c.direccion && <div style={S.entityMeta}>{c.direccion}</div>}
-                <div style={S.entityTag}>{count} actividad(es)</div>
-              </div>
-              <button style={S.iconBtnSm} onClick={async () => { await Api.delCompany(c.id); reload(); }}><Trash2 size={15} /></button>
+        {ordered.map((c) => (
+          <div key={c.id} style={S.entityCard}>
+            <div style={S.entityIcon}><Building2 size={20} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h4 style={S.entityName}>{c.nombre}</h4>
+              {c.contacto && <div style={S.entityMeta}>{c.contacto}</div>}
+              {c.direccion && <div style={S.entityMeta}>{c.direccion}</div>}
+              <div style={S.entityTag}>{c.count} actividad(es)</div>
             </div>
-          );
-        })}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <button style={S.iconBtnSm} onClick={() => openEdit(c)} title="Editar"><Pencil size={14} /></button>
+              <button style={S.iconBtnSm} onClick={async () => { if (confirm(`¿Eliminar "${c.nombre}"?`)) { await Api.delCompany(c.id); reload(); } }} title="Eliminar"><Trash2 size={14} /></button>
+            </div>
+          </div>
+        ))}
       </div>
-      {adding && (
-        <Modal title="Agregar empresa" onClose={() => setAdding(false)}>
+      {editing && (
+        <Modal title={editing === "new" ? "Agregar empresa" : "Editar empresa"} onClose={() => setEditing(null)}>
           <label style={S.label}>Nombre</label>
           <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Comercializadora del Pacífico" />
           <label style={S.label}>Contacto (opcional)</label>
@@ -785,11 +834,55 @@ function Companies({ companies, activities, reload }) {
           <label style={S.label}>Dirección (opcional)</label>
           <input style={S.input} value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Calle, ciudad" />
           <div style={S.modalActions}>
-            <button style={S.btnGhost} onClick={() => setAdding(false)}>Cancelar</button>
-            <button style={S.btnPrimary} onClick={save} disabled={!name.trim()}>Guardar</button>
+            <button style={S.btnGhost} onClick={() => setEditing(null)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={save} disabled={!name.trim()}>{editing === "new" ? "Guardar" : "Guardar cambios"}</button>
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ============ FRASES MOTIVADORAS ============
+function Frases() {
+  const [lista, setLista] = useState([]);
+  const [nueva, setNueva] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const cargar = async () => setLista(await Api.getFrases());
+  useEffect(() => { cargar(); }, []);
+
+  const agregar = async () => {
+    if (!nueva.trim()) return;
+    setBusy(true);
+    await Api.addFrase(nueva.trim());
+    setNueva(""); await cargar(); setBusy(false);
+  };
+  const borrar = async (id) => { await Api.delFrase(id); cargar(); };
+
+  return (
+    <div>
+      <PageHead title="Frases motivadoras" sub="Se muestra una al azar cada vez que alguien abre la app" />
+      <div style={S.panel}>
+        <label style={S.label}>Nueva frase</label>
+        <div style={{ display: "flex", gap: 10 }} className="formrow">
+          <input style={S.input} value={nueva} onChange={(e) => setNueva(e.target.value)}
+            placeholder="Escribe una frase que motive al equipo…" onKeyDown={(e) => e.key === "Enter" && agregar()} />
+          <button style={{ ...S.btnPrimary, width: "auto", whiteSpace: "nowrap" }} onClick={agregar} disabled={busy || !nueva.trim()}>
+            <Plus size={16} /> Agregar
+          </button>
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        {lista.length === 0 && <Empty text="Aún no hay frases. Agrega la primera arriba." />}
+        {lista.map((f) => (
+          <div key={f.id} style={S.fraseRow}>
+            <Quote size={16} color="var(--accent)" style={{ flexShrink: 0, marginTop: 2 }} />
+            <p style={{ flex: 1, fontSize: 14, lineHeight: 1.5, margin: 0 }}>{f.texto}</p>
+            <button style={S.iconBtnSm} onClick={() => borrar(f.id)} title="Eliminar"><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -803,6 +896,8 @@ function Team({ users, activities, reload }) {
   const [err, setErr] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editUser, setEditUser] = useState(null); // integrante a editar
+  const [editName, setEditName] = useState("");
 
   const members = users.filter((u) => u.rol === "member");
 
@@ -839,10 +934,11 @@ function Team({ users, activities, reload }) {
           return (
             <div key={m.id} style={S.entityCard}>
               <div style={S.avatar}>{m.nombre.slice(0, 2).toUpperCase()}</div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h4 style={S.entityName}>{m.nombre}</h4>
                 <div style={S.entityTag}>{assigned.length} asignadas · {doneN} completadas</div>
               </div>
+              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); }} title="Editar nombre"><Pencil size={14} /></button>
             </div>
           );
         })}
@@ -863,11 +959,20 @@ function Team({ users, activities, reload }) {
           </div>
         </Modal>
       )}
+      {editUser && (
+        <Modal title="Editar integrante" onClose={() => setEditUser(null)}>
+          <label style={S.label}>Nombre completo</label>
+          <input style={S.input} value={editName} onChange={(e) => setEditName(e.target.value)} />
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>El correo y la contraseña no se editan desde aquí. Si el integrante necesita cambiar su contraseña, puede hacerlo iniciando sesión.</p>
+          <div style={S.modalActions}>
+            <button style={S.btnGhost} onClick={() => setEditUser(null)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={async () => { if (editName.trim()) { await Api.updateUser(editUser.id, { nombre: editName.trim() }); setEditUser(null); reload(); } }} disabled={!editName.trim()}>Guardar cambios</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
-
-// ============ APP INTEGRANTE ============
 function MemberApp({ profile }) {
   const data = useData(profile);
   const [openActId, setOpenActId] = useState(null);
@@ -1071,6 +1176,10 @@ const S = {
   empty: { gridColumn: "1/-1", textAlign: "center", border: "1.5px dashed var(--line)", borderRadius: 14 },
   footer: { marginTop: 36, paddingTop: 24, borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, opacity: 0.85 },
   footerLogo: { width: 44, height: 44, display: "block" },
+  fraseOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "grid", placeItems: "center", padding: 24, zIndex: 300 },
+  fraseCard: { width: "100%", maxWidth: 420, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 32, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 },
+  fraseText: { fontSize: 19, lineHeight: 1.5, fontWeight: 600, color: "var(--text)", margin: 0, fontFamily: "var(--body)" },
+  fraseRow: { display: "flex", alignItems: "flex-start", gap: 12, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, padding: "14px 16px", marginBottom: 10 },
   footerText: { fontSize: 11.5, color: "var(--muted)", letterSpacing: 0.3, textAlign: "center" },
 };
 
