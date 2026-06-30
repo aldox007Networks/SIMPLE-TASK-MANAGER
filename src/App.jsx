@@ -1215,7 +1215,7 @@ function ProgressRing({ value }) {
 }
 function BarRow({ label, value, total, color, pct }) {
   const w = total ? (value / total) * 100 : 0;
-  return <div style={S.barRow}><div style={S.barLabel}>{label}</div><div style={S.barTrack}><div style={{ ...S.barFill, width: w + "%", background: color }} /></div><div style={S.barVal}>{pct ? value + "%" : value}</div></div>;
+  return <div style={S.barRow}><div style={S.barLabel} className="barlabel">{label}</div><div style={S.barTrack}><div style={{ ...S.barFill, width: w + "%", background: color }} /></div><div style={S.barVal}>{pct ? value + "%" : value}</div></div>;
 }
 function Modal({ title, children, onClose }) {
   return <div style={S.overlay} onClick={onClose}><div style={S.modal} onClick={(e) => e.stopPropagation()}><div style={S.modalHead}><h3 style={S.modalTitle}>{title}</h3><button style={S.iconBtnSm} onClick={onClose}><X size={18} /></button></div><div style={S.modalBody}>{children}</div></div></div>;
@@ -1450,5 +1450,11 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
   /* Botones de acción y filas de formulario se apilan */
   .actionrow{ flex-direction:column !important; }
   .formrow{ flex-direction:column !important; gap:0 !important; }
+  /* Paneles y su contenido nunca exceden el ancho */
+  .main > div, .twocol > div{ max-width:100% !important; }
+  .barlabel{ width:auto !important; flex:1 1 40% !important; min-width:0 !important; }
+  select, input, textarea{ max-width:100% !important; }
+  /* Tarjetas KPI con texto que no rebase */
+  .kpigrid > div{ min-width:0 !important; overflow:hidden; }
 }
-`;
+* { min-width: 0; }`;
