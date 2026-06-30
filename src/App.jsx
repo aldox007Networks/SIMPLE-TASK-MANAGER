@@ -449,6 +449,9 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
   const [repCompany, setRepCompany] = useState("all");
   const [repMember, setRepMember] = useState("all");
   const [repStatus, setRepStatus] = useState("all");
+  const [verPendientesVB, setVerPendientesVB] = useState(false);
+
+  const pendientesVB = activities.filter((a) => a.approvalRequested);
 
   const filtered = useMemo(() => activities.filter((a) => {
     if (repCompany !== "all" && a.companyId !== repCompany) return false;
@@ -489,7 +492,29 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
         <KpiCard icon={CheckCircle2} label="Completadas" value={done} tone="green" />
       </div>
       {needApproval > 0 && (
-        <div style={S.alertStrip}><ThumbsUp size={16} /><span><b>{needApproval}</b> actividad(es) esperan tu visto bueno.</span></div>
+        <div>
+          <div style={{ ...S.alertStrip, cursor: "pointer", marginBottom: verPendientesVB ? 8 : 20 }} onClick={() => setVerPendientesVB((v) => !v)}>
+            <ThumbsUp size={16} />
+            <span style={{ flex: 1 }}><b>{needApproval}</b> actividad(es) esperan tu visto bueno.</span>
+            <ChevronRight size={16} style={{ transform: verPendientesVB ? "rotate(90deg)" : "none", transition: "transform .2s" }} />
+          </div>
+          {verPendientesVB && (
+            <div style={{ ...S.panel, marginBottom: 20 }}>
+              {pendientesVB.map((a) => (
+                <div key={a.id} style={S.repRow} onClick={() => onOpenActivity(a.id)}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={S.repTitle}>{a.title}</div>
+                    <div style={S.repMeta}>
+                      {companies.find((c) => c.id === a.companyId)?.nombre || "—"} · {users.find((u) => u.id === a.assignedTo)?.nombre || "Sin asignar"}
+                    </div>
+                  </div>
+                  <span style={S.approvalTag}><ThumbsUp size={11} /> V°B°</span>
+                  <ChevronRight size={16} color="var(--muted)" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
       <div style={S.twoCol} className="twocol">
         <div style={S.panel}>
