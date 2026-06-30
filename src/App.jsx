@@ -176,6 +176,7 @@ function normalizeActivity(a) {
     startedAt: a.iniciada, completedAt: a.completada_en,
     updates: (a.avances || []).map((u) => ({
       id: u.id, by: u.autor_id, text: u.texto, photos: u.fotos || [], pct: u.progreso, ts: u.creado,
+      solicitaVB: u.solicita_vb, motivoVB: u.motivo_vb,
     })).sort((x, y) => new Date(x.ts) - new Date(y.ts)),
   };
 }
@@ -192,13 +193,22 @@ const Api = {
     }).select().single();
     return row;
   },
-  async addUpdate(activityId, authorId, text, photos, pct, activity) {
-    await supabase.from("avances").insert({ actividad_id: activityId, autor_id: authorId, texto: text, fotos: photos, progreso: pct });
+  async addUpdate(activityId, authorId, text, photos, pct, activity, vb) {
+    const { data: avance } = await supabase.from("avances")
+      .insert({ actividad_id: activityId, autor_id: authorId, texto: text, fotos: photos, progreso: pct,
+                solicita_vb: vb?.solicita || false, motivo_vb: vb?.motivo || null })
+      .select().single();
     const patch = { progreso: pct };
-    // Marca el inicio real la primera vez que pasa de 0%
     if (pct > 0 && !activity?.startedAt) patch.iniciada = new Date().toISOString();
-    // Marca la fecha de término al llegar a 100%
     if (pct >= 100 && activity?.progress < 100) patch.completada_en = new Date().toISOString();
+    // Si este avance solicita visto bueno, lo marcamos en la actividad y lo vinculamos
+    if (vb?.solicita) {
+      patch.aprobacion_solicitada = true;
+      patch.motivo_aprobacion = vb.motivo || null;
+      patch.avance_vb = avance?.id || null;
+      patch.rechazada = false;
+      patch.motivo_rechazo = null;
+    }
     await supabase.from("actividades").update(patch).eq("id", activityId);
   },
   async setApprovalRequested(activityId, val, motivo = null) {
@@ -687,8 +697,8 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoErr, setPhotoErr] = useState("");
-  const [showApprovalReq, setShowApprovalReq] = useState(false); // modal: integrante pide V°B°
-  const [motivoReq, setMotivoReq] = useState("");
+  const [pideVB, setPideVB] = useState(false); // casilla: solicito visto bueno
+  const [motivoVB, setMotivoVB] = useState(""); // motivo de la solicitud
   const [showReject, setShowReject] = useState(false); // modal: admin rechaza
   const [motivoRej, setMotivoRej] = useState("");
   const [fotosRej, setFotosRej] = useState([]);
@@ -707,22 +717,20 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   };
 
   const submitUpdate = async () => {
-    if (!text.trim() && photos.length === 0 && pct === a.progress) return;
+    if (!text.trim() && photos.length === 0 && pct === a.progress && !pideVB) return;
+    if (pideVB && !motivoVB.trim()) { setPhotoErr("Escribe el motivo del visto bueno que solicitas."); return; }
     setSaving(true);
-    await Api.addUpdate(a.id, profile.id, text.trim(), photos, pct, a);
+    const vb = pideVB ? { solicita: true, motivo: motivoVB.trim() } : null;
+    await Api.addUpdate(a.id, profile.id, text.trim(), photos, pct, a, vb);
     const reached100 = pct >= 100 && a.progress < 100;
     if (admin) {
-      if (reached100) await Api.pushNotif(admin.id, `"${a.title}" se completó al 100% (${profile.nombre})`, a.id, "done");
+      if (vb) await Api.pushNotif(admin.id, `${profile.nombre} solicita tu visto bueno en "${a.title}" (avance ${pct}%)`, a.id, "approval");
+      else if (reached100) await Api.pushNotif(admin.id, `"${a.title}" se completó al 100% (${profile.nombre})`, a.id, "done");
       else await Api.pushNotif(admin.id, `Avance en "${a.title}": ${pct}% (${profile.nombre})`, a.id, "progress");
     }
-    setText(""); setPhotos([]); setSaving(false); reload();
+    setText(""); setPhotos([]); setPideVB(false); setMotivoVB(""); setPhotoErr(""); setSaving(false); reload();
   };
 
-  const requestApproval = async () => {
-    await Api.setApprovalRequested(a.id, true, motivoReq.trim() || null);
-    if (admin) await Api.pushNotif(admin.id, `${who?.nombre || "Un integrante"} solicita tu visto bueno en "${a.title}"`, a.id, "approval");
-    setShowApprovalReq(false); setMotivoReq(""); reload();
-  };
   const giveApproval = async () => {
     await Api.approve(a.id);
     await Api.pushNotif(a.assignedTo, `El administrador dio el visto bueno en "${a.title}". Puedes continuar.`, a.id, "done");
@@ -805,10 +813,22 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
           {photoErr && <div style={S.errBox}><AlertCircle size={14} /> {photoErr}</div>}
           <label style={S.label}>Porcentaje de avance: <b style={{ color: "var(--accent)" }}>{pct}%</b></label>
           <input type="range" min={0} max={100} step={5} value={pct} onChange={(e) => setPct(Number(e.target.value))} style={S.range} />
-          <div style={S.updateActions} className="actionrow">
-            <button style={S.btnGhost} onClick={() => setShowApprovalReq(true)} disabled={a.approvalRequested}><ThumbsUp size={15} /> {a.approvalRequested ? "V°B° solicitado" : "Solicitar visto bueno"}</button>
-            <button style={S.btnPrimary} onClick={submitUpdate} disabled={saving || busy}>{saving ? "Guardando…" : pct >= 100 ? "Marcar 100% y notificar" : "Guardar avance"}</button>
+
+          {/* Casilla: solicitar visto bueno dentro del avance */}
+          <div style={S.vbBox}>
+            <label style={S.vbCheck}>
+              <input type="checkbox" checked={pideVB} onChange={(e) => setPideVB(e.target.checked)} style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+              <span><ThumbsUp size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />Solicito visto bueno del administrador</span>
+            </label>
+            {pideVB && (
+              <textarea style={{ ...S.textarea, marginTop: 10 }} rows={3} value={motivoVB} onChange={(e) => setMotivoVB(e.target.value)}
+                placeholder="Explica qué necesitas que el administrador revise o autorice…" />
+            )}
           </div>
+
+          <button style={{ ...S.btnPrimary, marginTop: 14 }} onClick={submitUpdate} disabled={saving || busy}>
+            {saving ? "Guardando…" : pideVB ? "Guardar avance y solicitar V°B°" : pct >= 100 ? "Marcar 100% y notificar" : "Guardar avance"}
+          </button>
         </div>
       )}
 
@@ -825,6 +845,12 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
                   <div style={S.timeHead}><b>{author?.nombre || "—"}</b><span style={S.timePct}>{u.pct}%</span><span style={S.timeDate}>{fmtDate(u.ts)}</span></div>
                   {u.text && <p style={S.timeText}>{u.text}</p>}
                   {u.photos?.length > 0 && <div style={S.thumbGrid}>{u.photos.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(u.photos, i)} />)}</div>}
+                  {u.solicitaVB && (
+                    <div style={S.vbTag}>
+                      <ThumbsUp size={13} /> <b>Solicitó visto bueno</b>
+                      {u.motivoVB && <span style={{ display: "block", marginTop: 4, fontWeight: 400, color: "var(--text)" }}>{u.motivoVB}</span>}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -841,19 +867,6 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
             Inició: {fmtDate(a.startedAt || a.createdAt)} · Terminó: {fmtDate(a.completedAt)}
           </p>
         </div>
-      )}
-
-      {/* Modal: integrante solicita V°B° con motivo */}
-      {showApprovalReq && (
-        <Modal title="Solicitar visto bueno" onClose={() => setShowApprovalReq(false)}>
-          <label style={S.label}>¿Por qué solicitas el visto bueno?</label>
-          <textarea style={S.textarea} rows={4} value={motivoReq} onChange={(e) => setMotivoReq(e.target.value)}
-            placeholder="Explica qué necesitas que el administrador revise o autorice…" />
-          <div style={S.modalActions}>
-            <button style={S.btnGhost} onClick={() => setShowApprovalReq(false)}>Cancelar</button>
-            <button style={S.btnPrimary} onClick={requestApproval}>Enviar solicitud</button>
-          </div>
-        </Modal>
       )}
 
       {/* Modal: admin niega el V°B° con explicación y fotos */}
@@ -1383,6 +1396,9 @@ const S = {
   chipRow: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 },
   chip: { background: "var(--surface)", border: "1px solid var(--line)", color: "var(--muted)", borderRadius: 20, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
   chipActive: { background: "var(--accent)", border: "1px solid var(--accent)", color: "#1a1a1a", borderRadius: 20, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
+  vbBox: { marginTop: 14, background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 12, padding: 14 },
+  vbCheck: { display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, fontWeight: 600, cursor: "pointer", color: "var(--text)" },
+  vbTag: { marginTop: 10, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.3)", color: "var(--amber)", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, lineHeight: 1.5 },
   lbOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", display: "grid", placeItems: "center", padding: 20, zIndex: 400 },
   lbImage: { maxWidth: "100%", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 },
   lbClose: { position: "absolute", top: 16, right: 16, width: 44, height: 44, borderRadius: 22, background: "rgba(255,255,255,.12)", border: "none", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", zIndex: 401 },
