@@ -171,6 +171,9 @@ function normalizeActivity(a) {
     companyId: a.empresa_id, assignedTo: a.asignado_a, progress: a.progreso || 0,
     photos: a.fotos || [], approvalRequested: a.aprobacion_solicitada, approved: a.aprobada,
     createdAt: a.creado, createdBy: a.creado_por,
+    motivoAprobacion: a.motivo_aprobacion,
+    rejected: a.rechazada, motivoRechazo: a.motivo_rechazo, fotosRechazo: a.fotos_rechazo || [],
+    startedAt: a.iniciada, completedAt: a.completada_en,
     updates: (a.avances || []).map((u) => ({
       id: u.id, by: u.autor_id, text: u.texto, photos: u.fotos || [], pct: u.progreso, ts: u.creado,
     })).sort((x, y) => new Date(x.ts) - new Date(y.ts)),
@@ -189,15 +192,23 @@ const Api = {
     }).select().single();
     return row;
   },
-  async addUpdate(activityId, authorId, text, photos, pct) {
+  async addUpdate(activityId, authorId, text, photos, pct, activity) {
     await supabase.from("avances").insert({ actividad_id: activityId, autor_id: authorId, texto: text, fotos: photos, progreso: pct });
-    await supabase.from("actividades").update({ progreso: pct }).eq("id", activityId);
+    const patch = { progreso: pct };
+    // Marca el inicio real la primera vez que pasa de 0%
+    if (pct > 0 && !activity?.startedAt) patch.iniciada = new Date().toISOString();
+    // Marca la fecha de término al llegar a 100%
+    if (pct >= 100 && activity?.progress < 100) patch.completada_en = new Date().toISOString();
+    await supabase.from("actividades").update(patch).eq("id", activityId);
   },
-  async setApprovalRequested(activityId, val) {
-    await supabase.from("actividades").update({ aprobacion_solicitada: val }).eq("id", activityId);
+  async setApprovalRequested(activityId, val, motivo = null) {
+    await supabase.from("actividades").update({ aprobacion_solicitada: val, motivo_aprobacion: motivo, rechazada: false, motivo_rechazo: null }).eq("id", activityId);
   },
   async approve(activityId) {
-    await supabase.from("actividades").update({ aprobacion_solicitada: false, aprobada: true }).eq("id", activityId);
+    await supabase.from("actividades").update({ aprobacion_solicitada: false, aprobada: true, rechazada: false }).eq("id", activityId);
+  },
+  async reject(activityId, motivo, fotos) {
+    await supabase.from("actividades").update({ aprobacion_solicitada: false, aprobada: false, rechazada: true, motivo_rechazo: motivo, fotos_rechazo: fotos || [] }).eq("id", activityId);
   },
   async addCompany(c) { await supabase.from("empresas").insert(c); },
   async updateCompany(id, c) { await supabase.from("empresas").update(c).eq("id", id); },
@@ -406,8 +417,8 @@ function AdminApp({ profile }) {
           )}
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
-          {tab === "companies" && <Companies {...shared} />}
-          {tab === "team" && <Team {...shared} />}
+          {tab === "companies" && <Companies {...shared} onOpenActivity={openActivity} />}
+          {tab === "team" && <Team {...shared} onOpenActivity={openActivity} />}
           {tab === "frases" && <Frases />}
           <Footer />
         </main>
@@ -676,6 +687,12 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoErr, setPhotoErr] = useState("");
+  const [showApprovalReq, setShowApprovalReq] = useState(false); // modal: integrante pide V°B°
+  const [motivoReq, setMotivoReq] = useState("");
+  const [showReject, setShowReject] = useState(false); // modal: admin rechaza
+  const [motivoRej, setMotivoRej] = useState("");
+  const [fotosRej, setFotosRej] = useState([]);
+  const [busyRej, setBusyRej] = useState(false);
 
   const addPhotos = async (files) => {
     setBusy(true); setPhotoErr("");
@@ -692,7 +709,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const submitUpdate = async () => {
     if (!text.trim() && photos.length === 0 && pct === a.progress) return;
     setSaving(true);
-    await Api.addUpdate(a.id, profile.id, text.trim(), photos, pct);
+    await Api.addUpdate(a.id, profile.id, text.trim(), photos, pct, a);
     const reached100 = pct >= 100 && a.progress < 100;
     if (admin) {
       if (reached100) await Api.pushNotif(admin.id, `"${a.title}" se completó al 100% (${profile.nombre})`, a.id, "done");
@@ -702,14 +719,26 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   };
 
   const requestApproval = async () => {
-    await Api.setApprovalRequested(a.id, true);
+    await Api.setApprovalRequested(a.id, true, motivoReq.trim() || null);
     if (admin) await Api.pushNotif(admin.id, `${who?.nombre || "Un integrante"} solicita tu visto bueno en "${a.title}"`, a.id, "approval");
-    reload();
+    setShowApprovalReq(false); setMotivoReq(""); reload();
   };
   const giveApproval = async () => {
     await Api.approve(a.id);
     await Api.pushNotif(a.assignedTo, `El administrador dio el visto bueno en "${a.title}". Puedes continuar.`, a.id, "done");
     reload();
+  };
+  const addFotosRej = async (files) => {
+    setBusyRej(true);
+    const arr = [];
+    for (const f of Array.from(files).slice(0, 4)) { const r = await uploadPhoto(f); if (r.url) arr.push(r.url); }
+    setFotosRej((p) => [...p, ...arr].slice(0, 6));
+    setBusyRej(false);
+  };
+  const doReject = async () => {
+    await Api.reject(a.id, motivoRej.trim(), fotosRej);
+    await Api.pushNotif(a.assignedTo, `El administrador NO aprobó "${a.title}". Revisa la explicación.`, a.id, "approval");
+    setShowReject(false); setMotivoRej(""); setFotosRej([]); reload();
   };
 
   return (
@@ -738,10 +767,33 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
           <div style={S.thumbGrid}>{a.photos.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(a.photos, i)} />)}</div></div>
       )}
 
+      {/* Aviso de rechazo (lo ve todo el mundo) */}
+      {a.rejected && (
+        <div style={{ ...S.approvalPanel, background: "rgba(220,80,80,.1)", borderColor: "rgba(220,80,80,.3)", flexDirection: "column", alignItems: "stretch" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#f87171", fontWeight: 700 }}>
+            <ThumbsDown size={18} /> Visto bueno NO aprobado
+          </div>
+          {a.motivoRechazo && <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.5 }}>{a.motivoRechazo}</p>}
+          {a.fotosRechazo?.length > 0 && (
+            <div style={S.thumbGrid}>{a.fotosRechazo.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(a.fotosRechazo, i)} />)}</div>
+          )}
+        </div>
+      )}
+
       {isAdmin && a.approvalRequested && (
-        <div style={S.approvalPanel}>
-          <div><ThumbsUp size={18} /> <b>{who?.nombre}</b> solicita tu visto bueno para continuar.</div>
-          <button style={{ ...S.btnPrimary, width: "auto" }} onClick={giveApproval}><Check size={16} /> Dar visto bueno</button>
+        <div style={{ ...S.approvalPanel, flexDirection: "column", alignItems: "stretch", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ThumbsUp size={18} /> <span><b>{who?.nombre}</b> solicita tu visto bueno para continuar.</span>
+          </div>
+          {a.motivoAprobacion && (
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "10px 14px", fontSize: 13.5, lineHeight: 1.5 }}>
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>Motivo de la solicitud:</span><br />{a.motivoAprobacion}
+            </div>
+          )}
+          <div style={S.updateActions} className="actionrow">
+            <button style={S.btnGhost} onClick={() => setShowReject(true)}><ThumbsDown size={15} /> Negar</button>
+            <button style={S.btnPrimary} onClick={giveApproval}><Check size={16} /> Dar visto bueno</button>
+          </div>
         </div>
       )}
 
@@ -754,7 +806,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
           <label style={S.label}>Porcentaje de avance: <b style={{ color: "var(--accent)" }}>{pct}%</b></label>
           <input type="range" min={0} max={100} step={5} value={pct} onChange={(e) => setPct(Number(e.target.value))} style={S.range} />
           <div style={S.updateActions} className="actionrow">
-            <button style={S.btnGhost} onClick={requestApproval} disabled={a.approvalRequested}><ThumbsUp size={15} /> {a.approvalRequested ? "V°B° solicitado" : "Solicitar visto bueno"}</button>
+            <button style={S.btnGhost} onClick={() => setShowApprovalReq(true)} disabled={a.approvalRequested}><ThumbsUp size={15} /> {a.approvalRequested ? "V°B° solicitado" : "Solicitar visto bueno"}</button>
             <button style={S.btnPrimary} onClick={submitUpdate} disabled={saving || busy}>{saving ? "Guardando…" : pct >= 100 ? "Marcar 100% y notificar" : "Guardar avance"}</button>
           </div>
         </div>
@@ -779,14 +831,111 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
           })}
         </div>
       </div>
+
+      {/* Tiempo que tomó la actividad */}
+      {a.progress >= 100 && a.completedAt && (
+        <div style={S.panel}>
+          <h3 style={S.panelTitle}><Timer size={14} /> Tiempo de ejecución</h3>
+          <p style={S.descText}>{tiempoTranscurrido(a.startedAt || a.createdAt, a.completedAt)}</p>
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+            Inició: {fmtDate(a.startedAt || a.createdAt)} · Terminó: {fmtDate(a.completedAt)}
+          </p>
+        </div>
+      )}
+
+      {/* Modal: integrante solicita V°B° con motivo */}
+      {showApprovalReq && (
+        <Modal title="Solicitar visto bueno" onClose={() => setShowApprovalReq(false)}>
+          <label style={S.label}>¿Por qué solicitas el visto bueno?</label>
+          <textarea style={S.textarea} rows={4} value={motivoReq} onChange={(e) => setMotivoReq(e.target.value)}
+            placeholder="Explica qué necesitas que el administrador revise o autorice…" />
+          <div style={S.modalActions}>
+            <button style={S.btnGhost} onClick={() => setShowApprovalReq(false)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={requestApproval}>Enviar solicitud</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal: admin niega el V°B° con explicación y fotos */}
+      {showReject && (
+        <Modal title="Negar visto bueno" onClose={() => setShowReject(false)}>
+          <label style={S.label}>Explica por qué no se aprueba</label>
+          <textarea style={S.textarea} rows={4} value={motivoRej} onChange={(e) => setMotivoRej(e.target.value)}
+            placeholder="Indica qué debe corregirse o por qué no procede…" />
+          <label style={S.label}>Fotos (opcional)</label>
+          <PhotoUploader photos={fotosRej} setPhotos={setFotosRej} addPhotos={addFotosRej} busy={busyRej} />
+          <div style={S.modalActions}>
+            <button style={S.btnGhost} onClick={() => setShowReject(false)}>Cancelar</button>
+            <button style={S.btnPrimary} onClick={doReject} disabled={!motivoRej.trim() || busyRej}>Enviar y negar</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
 
-// ============ EMPRESAS ============
-function Companies({ companies, activities, reload }) {
+// Calcula y formatea el tiempo entre dos fechas
+function tiempoTranscurrido(inicio, fin) {
+  const ms = new Date(fin) - new Date(inicio);
+  if (ms < 0 || isNaN(ms)) return "—";
+  const min = Math.floor(ms / 60000);
+  const dias = Math.floor(min / 1440);
+  const horas = Math.floor((min % 1440) / 60);
+  const mins = min % 60;
+  const partes = [];
+  if (dias) partes.push(`${dias} día${dias > 1 ? "s" : ""}`);
+  if (horas) partes.push(`${horas} hora${horas > 1 ? "s" : ""}`);
+  if (mins && !dias) partes.push(`${mins} minuto${mins > 1 ? "s" : ""}`);
+  return partes.length ? partes.join(" y ") : "Menos de un minuto";
+}
+
+// ============ HISTORIAL DE ACTIVIDADES (por usuario o empresa) ============
+function HistorialActividades({ titulo, subtitulo, acts, companies, users, onOpenActivity, onBack }) {
+  const [filtro, setFiltro] = useState("all");
+
+  const porIniciar = acts.filter((a) => a.progress === 0);
+  const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
+  const terminadas = acts.filter((a) => a.progress >= 100);
+
+  const visibles = filtro === "pending" ? porIniciar
+    : filtro === "progress" ? enProceso
+    : filtro === "done" ? terminadas
+    : acts;
+
+  const chips = [
+    { id: "all", label: `Todas (${acts.length})` },
+    { id: "pending", label: `Por iniciar (${porIniciar.length})` },
+    { id: "progress", label: `En proceso (${enProceso.length})` },
+    { id: "done", label: `Terminadas (${terminadas.length})` },
+  ];
+
+  return (
+    <div>
+      <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
+      <PageHead title={titulo} sub={subtitulo} />
+      <div style={S.chipRow}>
+        {chips.map((c) => (
+          <button key={c.id} style={filtro === c.id ? S.chipActive : S.chip} onClick={() => setFiltro(c.id)}>{c.label}</button>
+        ))}
+      </div>
+      <div style={S.cardGrid} className="cardgrid">
+        {visibles.length === 0 && <Empty text="No hay actividades en este estado." />}
+        {visibles.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => onOpenActivity(a.id)} />)}
+      </div>
+    </div>
+  );
+}
+
+function Companies({ companies, activities, reload, users, onOpenActivity }) {
   const [editing, setEditing] = useState(null); // null | 'new' | company object
   const [name, setName] = useState(""); const [contact, setContact] = useState(""); const [address, setAddress] = useState("");
+  const [verHistorial, setVerHistorial] = useState(null); // empresa cuyo historial se ve
+
+  if (verHistorial) {
+    const acts = activities.filter((a) => a.companyId === verHistorial.id);
+    return <HistorialActividades titulo={verHistorial.nombre} subtitulo="Historial de actividades de la empresa"
+      acts={acts} companies={companies} users={users} onOpenActivity={onOpenActivity} onBack={() => setVerHistorial(null)} />;
+  }
 
   const openNew = () => { setName(""); setContact(""); setAddress(""); setEditing("new"); };
   const openEdit = (c) => { setName(c.nombre || ""); setContact(c.contacto || ""); setAddress(c.direccion || ""); setEditing(c); };
@@ -813,11 +962,11 @@ function Companies({ companies, activities, reload }) {
         {ordered.map((c) => (
           <div key={c.id} style={S.entityCard}>
             <div style={S.entityIcon}><Building2 size={20} /></div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setVerHistorial(c)}>
               <h4 style={S.entityName}>{c.nombre}</h4>
               {c.contacto && <div style={S.entityMeta}>{c.contacto}</div>}
               {c.direccion && <div style={S.entityMeta}>{c.direccion}</div>}
-              <div style={S.entityTag}>{c.count} actividad(es)</div>
+              <div style={S.entityTag}>{c.count} actividad(es) · ver historial</div>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <button style={S.iconBtnSm} onClick={() => openEdit(c)} title="Editar"><Pencil size={14} /></button>
@@ -889,7 +1038,7 @@ function Frases() {
 }
 
 // ============ EQUIPO ============
-function Team({ users, activities, reload }) {
+function Team({ users, activities, reload, companies, onOpenActivity }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -899,8 +1048,15 @@ function Team({ users, activities, reload }) {
   const [busy, setBusy] = useState(false);
   const [editUser, setEditUser] = useState(null); // integrante a editar
   const [editName, setEditName] = useState("");
+  const [verHistorial, setVerHistorial] = useState(null); // integrante cuyo historial se ve
 
   const members = users.filter((u) => u.rol === "member");
+
+  if (verHistorial) {
+    const acts = activities.filter((a) => a.assignedTo === verHistorial.id);
+    return <HistorialActividades titulo={verHistorial.nombre} subtitulo="Historial de actividades del integrante"
+      acts={acts} companies={companies} users={users} onOpenActivity={onOpenActivity} onBack={() => setVerHistorial(null)} />;
+  }
 
   const save = async () => {
     setErr(""); setOkMsg("");
@@ -935,9 +1091,9 @@ function Team({ users, activities, reload }) {
           return (
             <div key={m.id} style={S.entityCard}>
               <div style={S.avatar}>{m.nombre.slice(0, 2).toUpperCase()}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setVerHistorial(m)}>
                 <h4 style={S.entityName}>{m.nombre}</h4>
-                <div style={S.entityTag}>{assigned.length} asignadas · {doneN} completadas</div>
+                <div style={S.entityTag}>{assigned.length} asignadas · {doneN} completadas · ver historial</div>
               </div>
               <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); }} title="Editar nombre"><Pencil size={14} /></button>
             </div>
@@ -1224,6 +1380,9 @@ const S = {
   fraseCard: { width: "100%", maxWidth: 420, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 32, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 },
   fraseText: { fontSize: 19, lineHeight: 1.5, fontWeight: 600, color: "var(--text)", margin: 0, fontFamily: "var(--body)" },
   fraseRow: { display: "flex", alignItems: "flex-start", gap: 12, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, padding: "14px 16px", marginBottom: 10 },
+  chipRow: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 18 },
+  chip: { background: "var(--surface)", border: "1px solid var(--line)", color: "var(--muted)", borderRadius: 20, padding: "7px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--body)" },
+  chipActive: { background: "var(--accent)", border: "1px solid var(--accent)", color: "#1a1a1a", borderRadius: 20, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--body)" },
   lbOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", display: "grid", placeItems: "center", padding: 20, zIndex: 400 },
   lbImage: { maxWidth: "100%", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 },
   lbClose: { position: "absolute", top: 16, right: 16, width: 44, height: 44, borderRadius: 22, background: "rgba(255,255,255,.12)", border: "none", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", zIndex: 401 },
