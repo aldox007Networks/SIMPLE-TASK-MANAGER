@@ -95,6 +95,7 @@ export default function App() {
   return (
     <Shell>
       <FraseMotivadora />
+      <Lightbox />
       {profile.rol === "admin"
         ? <AdminApp profile={profile} />
         : <MemberApp profile={profile} />}
@@ -576,7 +577,7 @@ function ActivityCard({ a, companies, users, onClick }) {
         <span><Building2 size={12} /> {comp?.nombre || "—"}</span>
         <span><User size={12} /> {who?.nombre || "Sin asignar"}</span>
       </div>
-      {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => <img key={i} src={p} style={S.thumb} alt="" />)}</div>}
+      {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => <img key={i} src={p} style={{ ...S.thumb, cursor: "pointer" }} alt="" onClick={(e) => { e.stopPropagation(); openLightbox(a.photos, i); }} />)}</div>}
       <MiniProgress value={a.progress} full />
     </div>
   );
@@ -734,7 +735,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
       {a.description && <div style={S.panel}><h3 style={S.panelTitle}><FileText size={14} /> Descripción</h3><p style={S.descText}>{a.description}</p></div>}
       {a.photos?.length > 0 && (
         <div style={S.panel}><h3 style={S.panelTitle}><ImageIcon size={14} /> Fotos de referencia</h3>
-          <div style={S.thumbGrid}>{a.photos.map((p, i) => <img key={i} src={p} style={S.thumbLg} alt="" />)}</div></div>
+          <div style={S.thumbGrid}>{a.photos.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(a.photos, i)} />)}</div></div>
       )}
 
       {isAdmin && a.approvalRequested && (
@@ -771,7 +772,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
                 <div style={S.timeBody}>
                   <div style={S.timeHead}><b>{author?.nombre || "—"}</b><span style={S.timePct}>{u.pct}%</span><span style={S.timeDate}>{fmtDate(u.ts)}</span></div>
                   {u.text && <p style={S.timeText}>{u.text}</p>}
-                  {u.photos?.length > 0 && <div style={S.thumbGrid}>{u.photos.map((p, i) => <img key={i} src={p} style={S.thumbLg} alt="" />)}</div>}
+                  {u.photos?.length > 0 && <div style={S.thumbGrid}>{u.photos.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(u.photos, i)} />)}</div>}
                 </div>
               </div>
             );
@@ -1063,6 +1064,49 @@ function Footer() {
   );
 }
 
+// Abrir el visor de fotos: dispara un evento que el Lightbox escucha
+function openLightbox(photos, index = 0) {
+  window.dispatchEvent(new CustomEvent("abrir-fotos", { detail: { photos, index } }));
+}
+
+// Visor de fotos a pantalla completa con navegación
+function Lightbox() {
+  const [photos, setPhotos] = useState(null);
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    const open = (e) => { setPhotos(e.detail.photos); setIdx(e.detail.index || 0); };
+    window.addEventListener("abrir-fotos", open);
+    return () => window.removeEventListener("abrir-fotos", open);
+  }, []);
+
+  useEffect(() => {
+    if (!photos) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setPhotos(null);
+      if (e.key === "ArrowRight") setIdx((i) => (i + 1) % photos.length);
+      if (e.key === "ArrowLeft") setIdx((i) => (i - 1 + photos.length) % photos.length);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [photos]);
+
+  if (!photos || photos.length === 0) return null;
+  const many = photos.length > 1;
+  const prev = (e) => { e.stopPropagation(); setIdx((i) => (i - 1 + photos.length) % photos.length); };
+  const next = (e) => { e.stopPropagation(); setIdx((i) => (i + 1) % photos.length); };
+
+  return (
+    <div style={S.lbOverlay} onClick={() => setPhotos(null)}>
+      <button style={S.lbClose} onClick={() => setPhotos(null)}><X size={24} /></button>
+      {many && <button style={{ ...S.lbNav, left: 12 }} onClick={prev}><ChevronRight size={28} style={{ transform: "rotate(180deg)" }} /></button>}
+      <img src={photos[idx]} style={S.lbImage} alt="" onClick={(e) => e.stopPropagation()} />
+      {many && <button style={{ ...S.lbNav, right: 12 }} onClick={next}><ChevronRight size={28} /></button>}
+      {many && <div style={S.lbCounter}>{idx + 1} / {photos.length}</div>}
+    </div>
+  );
+}
+
 // ============ ESTILOS ============
 const S = {
   root: { minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "var(--body)" },
@@ -1180,6 +1224,11 @@ const S = {
   fraseCard: { width: "100%", maxWidth: 420, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 18, padding: 32, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 },
   fraseText: { fontSize: 19, lineHeight: 1.5, fontWeight: 600, color: "var(--text)", margin: 0, fontFamily: "var(--body)" },
   fraseRow: { display: "flex", alignItems: "flex-start", gap: 12, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, padding: "14px 16px", marginBottom: 10 },
+  lbOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", display: "grid", placeItems: "center", padding: 20, zIndex: 400 },
+  lbImage: { maxWidth: "100%", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 },
+  lbClose: { position: "absolute", top: 16, right: 16, width: 44, height: 44, borderRadius: 22, background: "rgba(255,255,255,.12)", border: "none", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", zIndex: 401 },
+  lbNav: { position: "absolute", top: "50%", transform: "translateY(-50%)", width: 48, height: 48, borderRadius: 24, background: "rgba(255,255,255,.12)", border: "none", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", zIndex: 401 },
+  lbCounter: { position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)", color: "#fff", fontSize: 14, fontWeight: 600, background: "rgba(0,0,0,.5)", padding: "6px 14px", borderRadius: 20 },
   footerText: { fontSize: 11.5, color: "var(--muted)", letterSpacing: 0.3, textAlign: "center" },
 };
 
