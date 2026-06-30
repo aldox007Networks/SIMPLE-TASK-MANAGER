@@ -53,6 +53,10 @@ async function uploadPhoto(file) {
   return { url: data.publicUrl };
 }
 
+// Helpers: una foto puede ser un string (formato viejo) o { url, descripcion } (nuevo)
+const photoUrl = (p) => (typeof p === "string" ? p : p?.url || "");
+const photoDesc = (p) => (typeof p === "string" ? "" : p?.descripcion || "");
+
 // ============ APP ============
 export default function App() {
   const [session, setSession] = useState(null);
@@ -623,7 +627,7 @@ function ActivityCard({ a, companies, users, onClick }) {
         <span><Building2 size={12} /> {comp?.nombre || "—"}</span>
         <span><User size={12} /> {who?.nombre || "Sin asignar"}</span>
       </div>
-      {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => <img key={i} src={p} style={{ ...S.thumb, cursor: "pointer" }} alt="" onClick={(e) => { e.stopPropagation(); openLightbox(a.photos, i); }} />)}</div>}
+      {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => <img key={i} src={photoUrl(p)} style={{ ...S.thumb, cursor: "pointer" }} alt="" onClick={(e) => { e.stopPropagation(); openLightbox(a.photos, i); }} />)}</div>}
       <MiniProgress value={a.progress} full />
     </div>
   );
@@ -645,7 +649,7 @@ function ActivityForm({ companies, members, onClose, onSave }) {
     const arr = [];
     for (const f of Array.from(files).slice(0, 6)) {
       const r = await uploadPhoto(f);
-      if (r.url) arr.push(r.url);
+      if (r.url) arr.push({ url: r.url, descripcion: "" });
       else if (r.error) setPhotoErr("No se pudo subir una foto: " + r.error);
     }
     setPhotos((p) => [...p, ...arr].slice(0, 8));
@@ -688,6 +692,11 @@ function ActivityForm({ companies, members, onClose, onSave }) {
 
 function PhotoUploader({ photos, setPhotos, addPhotos, busy }) {
   const ref = useRef();
+  const setDesc = (i, desc) => setPhotos((ph) => ph.map((p, j) => {
+    if (j !== i) return p;
+    const url = photoUrl(p);
+    return { url, descripcion: desc };
+  }));
   return (
     <div>
       <div style={S.uploadZone} onClick={() => ref.current?.click()}>
@@ -696,11 +705,15 @@ function PhotoUploader({ photos, setPhotos, addPhotos, busy }) {
         <input ref={ref} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => e.target.files && addPhotos(e.target.files)} />
       </div>
       {photos.length > 0 && (
-        <div style={S.thumbGrid}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
           {photos.map((p, i) => (
-            <div key={i} style={S.thumbWrap}>
-              <img src={p} style={S.thumbLg} alt="" />
-              <button style={S.thumbDel} onClick={() => setPhotos((ph) => ph.filter((_, j) => j !== i))}><X size={12} /></button>
+            <div key={i} style={S.photoItem}>
+              <div style={S.thumbWrap}>
+                <img src={photoUrl(p)} style={S.thumbLg} alt="" />
+                <button style={S.thumbDel} onClick={() => setPhotos((ph) => ph.filter((_, j) => j !== i))}><X size={12} /></button>
+              </div>
+              <input style={{ ...S.input, flex: 1 }} value={photoDesc(p)} onChange={(e) => setDesc(i, e.target.value)}
+                placeholder="Descripción de la foto (opcional)" />
             </div>
           ))}
         </div>
@@ -734,7 +747,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
     const arr = [];
     for (const f of Array.from(files).slice(0, 4)) {
       const r = await uploadPhoto(f);
-      if (r.url) arr.push(r.url);
+      if (r.url) arr.push({ url: r.url, descripcion: "" });
       else if (r.error) setPhotoErr("No se pudo subir una foto: " + r.error);
     }
     setPhotos((p) => [...p, ...arr].slice(0, 6));
@@ -764,7 +777,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const addFotosRej = async (files) => {
     setBusyRej(true);
     const arr = [];
-    for (const f of Array.from(files).slice(0, 4)) { const r = await uploadPhoto(f); if (r.url) arr.push(r.url); }
+    for (const f of Array.from(files).slice(0, 4)) { const r = await uploadPhoto(f); if (r.url) arr.push({ url: r.url, descripcion: "" }); }
     setFotosRej((p) => [...p, ...arr].slice(0, 6));
     setBusyRej(false);
   };
@@ -797,7 +810,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
       {a.description && <div style={S.panel}><h3 style={S.panelTitle}><FileText size={14} /> Descripción</h3><p style={S.descText}>{a.description}</p></div>}
       {a.photos?.length > 0 && (
         <div style={S.panel}><h3 style={S.panelTitle}><ImageIcon size={14} /> Fotos de referencia</h3>
-          <div style={S.thumbGrid}>{a.photos.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(a.photos, i)} />)}</div></div>
+          <PhotoGallery photos={a.photos} /></div>
       )}
 
       {/* Aviso de rechazo (lo ve todo el mundo) */}
@@ -808,7 +821,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
           </div>
           {a.motivoRechazo && <p style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.5 }}>{a.motivoRechazo}</p>}
           {a.fotosRechazo?.length > 0 && (
-            <div style={S.thumbGrid}>{a.fotosRechazo.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(a.fotosRechazo, i)} />)}</div>
+            <PhotoGallery photos={a.fotosRechazo} />
           )}
         </div>
       )}
@@ -869,7 +882,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
                 <div style={S.timeBody}>
                   <div style={S.timeHead}><b>{author?.nombre || "—"}</b><span style={S.timePct}>{u.pct}%</span><span style={S.timeDate}>{fmtDate(u.ts)}</span></div>
                   {u.text && <p style={S.timeText}>{u.text}</p>}
-                  {u.photos?.length > 0 && <div style={S.thumbGrid}>{u.photos.map((p, i) => <img key={i} src={p} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(u.photos, i)} />)}</div>}
+                  {u.photos?.length > 0 && <PhotoGallery photos={u.photos} />}
                   {u.solicitaVB && (
                     <div style={S.vbTag}>
                       <ThumbsUp size={13} /> <b>Solicitó visto bueno</b>
@@ -1258,6 +1271,21 @@ function Footer() {
   );
 }
 
+// Galería de fotos con descripción debajo de cada una (tocar abre el visor)
+function PhotoGallery({ photos }) {
+  if (!photos || photos.length === 0) return null;
+  return (
+    <div style={S.galleryGrid}>
+      {photos.map((p, i) => (
+        <div key={i} style={S.galleryItem}>
+          <img src={photoUrl(p)} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(photos, i)} />
+          {photoDesc(p) && <div style={S.galleryDesc}>{photoDesc(p)}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Abrir el visor de fotos: dispara un evento que el Lightbox escucha
 function openLightbox(photos, index = 0) {
   window.dispatchEvent(new CustomEvent("abrir-fotos", { detail: { photos, index } }));
@@ -1294,8 +1322,9 @@ function Lightbox() {
     <div style={S.lbOverlay} onClick={() => setPhotos(null)}>
       <button style={S.lbClose} onClick={() => setPhotos(null)}><X size={24} /></button>
       {many && <button style={{ ...S.lbNav, left: 12 }} onClick={prev}><ChevronRight size={28} style={{ transform: "rotate(180deg)" }} /></button>}
-      <img src={photos[idx]} style={S.lbImage} alt="" onClick={(e) => e.stopPropagation()} />
+      <img src={photoUrl(photos[idx])} style={S.lbImage} alt="" onClick={(e) => e.stopPropagation()} />
       {many && <button style={{ ...S.lbNav, right: 12 }} onClick={next}><ChevronRight size={28} /></button>}
+      {photoDesc(photos[idx]) && <div style={S.lbDesc} onClick={(e) => e.stopPropagation()}>{photoDesc(photos[idx])}</div>}
       {many && <div style={S.lbCounter}>{idx + 1} / {photos.length}</div>}
     </div>
   );
@@ -1424,6 +1453,11 @@ const S = {
   vbBox: { marginTop: 14, background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 12, padding: 14 },
   vbCheck: { display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, fontWeight: 600, cursor: "pointer", color: "var(--text)" },
   vbTag: { marginTop: 10, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.3)", color: "var(--amber)", borderRadius: 10, padding: "9px 12px", fontSize: 12.5, lineHeight: 1.5 },
+  photoItem: { display: "flex", gap: 12, alignItems: "center" },
+  galleryGrid: { display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10 },
+  galleryItem: { width: 88, display: "flex", flexDirection: "column", gap: 4 },
+  galleryDesc: { fontSize: 11, color: "var(--muted)", lineHeight: 1.35, wordBreak: "break-word" },
+  lbDesc: { position: "absolute", bottom: 64, left: "50%", transform: "translateX(-50%)", maxWidth: "85%", color: "#fff", fontSize: 14, lineHeight: 1.4, textAlign: "center", background: "rgba(0,0,0,.6)", padding: "10px 16px", borderRadius: 10 },
   lbOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", display: "grid", placeItems: "center", padding: 20, zIndex: 400 },
   lbImage: { maxWidth: "100%", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 },
   lbClose: { position: "absolute", top: 16, right: 16, width: 44, height: 44, borderRadius: 22, background: "rgba(255,255,255,.12)", border: "none", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer", zIndex: 401 },
