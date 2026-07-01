@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabase";
+import { registerPushSW, activarNotificaciones, permisoConcedido } from "./push";
 import {
   Bell, LayoutDashboard, ClipboardList, Building2, Users, LogOut,
   Plus, X, Camera, Check, AlertCircle, ChevronRight, Trash2,
@@ -64,6 +65,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    registerPushSW();
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
@@ -333,6 +335,8 @@ function Login() {
 // ============ TOPBAR ============
 function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload }) {
   const [open, setOpen] = useState(false);
+  const [pushOn, setPushOn] = useState(permisoConcedido());
+  const [pushMsg, setPushMsg] = useState("");
   const unread = notifs.filter((n) => !n.leida).length;
   const ref = useRef();
 
@@ -341,6 +345,13 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  const activar = async () => {
+    setPushMsg("");
+    const r = await activarNotificaciones(profile.id);
+    if (r.ok) { setPushOn(true); setPushMsg("¡Notificaciones activadas!"); }
+    else setPushMsg(r.error || "No se pudo activar.");
+  };
 
   return (
     <div style={S.topbar}>
@@ -383,6 +394,13 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
                   </div>
                 ))}
               </div>
+              {!pushOn && (
+                <div style={S.pushActivar}>
+                  <button style={S.btnSm} onClick={activar}><Bell size={13} /> Activar avisos en este celular</button>
+                  {pushMsg && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>{pushMsg}</div>}
+                </div>
+              )}
+              {pushOn && pushMsg && <div style={{ ...S.pushActivar, color: "var(--green)", fontSize: 12 }}>{pushMsg}</div>}
             </div>
           )}
         </div>
@@ -1361,6 +1379,7 @@ const S = {
   notifPanel: { position: "absolute", top: 48, right: 0, width: 320, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,.5)", zIndex: 100, overflow: "hidden" },
   notifHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid var(--line)", fontSize: 13, fontWeight: 700 },
   notifEmpty: { padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 },
+  pushActivar: { padding: "12px 14px", borderTop: "1px solid var(--line)", textAlign: "center" },
   notifItem: { display: "flex", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--line)", cursor: "pointer" },
   notifDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5, flexShrink: 0 },
   notifText: { fontSize: 13, lineHeight: 1.4 },
