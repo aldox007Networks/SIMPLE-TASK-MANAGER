@@ -199,6 +199,15 @@ const Api = {
     }).select().single();
     return row;
   },
+  async updateActivity(id, data) {
+    await supabase.from("actividades").update({
+      titulo: data.title, descripcion: data.description, empresa_id: data.companyId,
+      asignado_a: data.assignedTo, fotos: data.photos,
+    }).eq("id", id);
+  },
+  async updateAvance(id, text, photos) {
+    await supabase.from("avances").update({ texto: text, fotos: photos }).eq("id", id);
+  },
   async addUpdate(activityId, authorId, text, photos, pct, activity, vb) {
     const { data: avance } = await supabase.from("avances")
       .insert({ actividad_id: activityId, autor_id: authorId, texto: text, fotos: photos, progreso: pct,
@@ -225,6 +234,22 @@ const Api = {
   },
   async reject(activityId, motivo, fotos) {
     await supabase.from("actividades").update({ aprobacion_solicitada: false, aprobada: false, rechazada: true, motivo_rechazo: motivo, fotos_rechazo: fotos || [] }).eq("id", activityId);
+  },
+  async addDetalle(d) {
+    await supabase.from("detalles").insert({
+      empresa_id: d.companyId, reportado_por: d.reportadoPor,
+      titulo: d.titulo, descripcion: d.descripcion, fotos: d.fotos,
+    });
+  },
+  async getDetalles() {
+    const { data } = await supabase.from("detalles").select("*").order("creado", { ascending: false });
+    return data || [];
+  },
+  async descartarDetalle(id) {
+    await supabase.from("detalles").update({ estado: "descartado" }).eq("id", id);
+  },
+  async detalleAActividad(detalle, actividadId) {
+    await supabase.from("detalles").update({ estado: "convertido", actividad_id: actividadId }).eq("id", detalle.id);
   },
   async addCompany(c) { await supabase.from("empresas").insert(c); },
   async updateCompany(id, c) { await supabase.from("empresas").update(c).eq("id", id); },
@@ -423,6 +448,7 @@ function AdminApp({ profile }) {
   const tabs = [
     { id: "dash", label: "Panel", icon: LayoutDashboard },
     { id: "activities", label: "Actividades", icon: ClipboardList },
+    { id: "detalles", label: "Detalles", icon: AlertCircle },
     { id: "companies", label: "Empresas", icon: Building2 },
     { id: "team", label: "Equipo", icon: Users },
     { id: "frases", label: "Frases", icon: Quote },
@@ -449,6 +475,7 @@ function AdminApp({ profile }) {
           )}
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
+          {tab === "detalles" && <DetallesAdmin {...shared} onConvertido={data.reload} />}
           {tab === "companies" && <Companies {...shared} onOpenActivity={openActivity} />}
           {tab === "team" && <Team {...shared} onOpenActivity={openActivity} />}
           {tab === "frases" && <Frases />}
@@ -652,15 +679,16 @@ function ActivityCard({ a, companies, users, onClick }) {
 }
 
 // ============ FORM ACTIVIDAD ============
-function ActivityForm({ companies, members, onClose, onSave }) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [companyId, setCompanyId] = useState(companies[0]?.id || "");
-  const [assignedTo, setAssignedTo] = useState(members[0]?.id || "");
-  const [photos, setPhotos] = useState([]);
+function ActivityForm({ companies, members, onClose, onSave, initial }) {
+  const [title, setTitle] = useState(initial?.title || "");
+  const [description, setDescription] = useState(initial?.description || "");
+  const [companyId, setCompanyId] = useState(initial?.companyId || companies[0]?.id || "");
+  const [assignedTo, setAssignedTo] = useState(initial?.assignedTo || members[0]?.id || "");
+  const [photos, setPhotos] = useState(initial?.photos || []);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoErr, setPhotoErr] = useState("");
+  const esEdicion = !!initial;
 
   const addPhotos = async (files) => {
     setBusy(true); setPhotoErr("");
@@ -675,7 +703,7 @@ function ActivityForm({ companies, members, onClose, onSave }) {
   };
 
   return (
-    <Modal title="Nueva actividad" onClose={onClose}>
+    <Modal title={esEdicion ? "Editar actividad" : "Nueva actividad"} onClose={onClose}>
       <label style={S.label}>Título</label>
       <input style={S.input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ej. Instalación de red en sucursal norte" />
       <label style={S.label}>Descripción detallada</label>
@@ -701,7 +729,7 @@ function ActivityForm({ companies, members, onClose, onSave }) {
         <button style={S.btnGhost} onClick={onClose}>Cancelar</button>
         <button style={S.btnPrimary} disabled={!title.trim() || !companyId || !assignedTo || saving || busy}
           onClick={async () => { setSaving(true); await onSave({ title: title.trim(), description: description.trim(), companyId, assignedTo, photos }); }}>
-          {saving ? "Guardando…" : "Crear y asignar"}
+          {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : "Crear y asignar"}
         </button>
       </div>
     </Modal>
@@ -759,6 +787,28 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const [motivoRej, setMotivoRej] = useState("");
   const [fotosRej, setFotosRej] = useState([]);
   const [busyRej, setBusyRej] = useState(false);
+  const [editandoAvance, setEditandoAvance] = useState(null); // id del avance en edición
+  const [editandoActividad, setEditandoActividad] = useState(false); // modal editar actividad (admin)
+  const [editTexto, setEditTexto] = useState("");
+  const [editFotos, setEditFotos] = useState([]);
+  const [editBusy, setEditBusy] = useState(false);
+
+  const abrirEdicionAvance = (u) => {
+    setEditandoAvance(u.id);
+    setEditTexto(u.text || "");
+    setEditFotos(u.photos || []);
+  };
+  const guardarEdicionAvance = async () => {
+    await Api.updateAvance(editandoAvance, editTexto.trim(), editFotos);
+    setEditandoAvance(null); reload();
+  };
+  const addEditFotos = async (files) => {
+    setEditBusy(true);
+    const arr = [];
+    for (const f of Array.from(files).slice(0, 4)) { const r = await uploadPhoto(f); if (r.url) arr.push({ url: r.url, descripcion: "" }); }
+    setEditFotos((p) => [...p, ...arr].slice(0, 6));
+    setEditBusy(false);
+  };
 
   const addPhotos = async (files) => {
     setBusy(true); setPhotoErr("");
@@ -807,7 +857,10 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
 
   return (
     <div>
-      <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
+        {isAdmin && <button style={S.btnGhost} onClick={() => setEditandoActividad(true)}><Pencil size={14} /> Editar actividad</button>}
+      </div>
       <div style={S.detailHead} className="detailhead">
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
@@ -894,18 +947,38 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
         <div style={S.timeline}>
           {[...(a.updates || [])].reverse().map((u) => {
             const author = users.find((x) => x.id === u.by);
+            const puedeEditar = u.by === profile.id; // el autor puede editar su avance
+            const enEdicion = editandoAvance === u.id;
             return (
               <div key={u.id} style={S.timeItem}>
                 <div style={S.timeDot} />
                 <div style={S.timeBody}>
-                  <div style={S.timeHead}><b>{author?.nombre || "—"}</b><span style={S.timePct}>{u.pct}%</span><span style={S.timeDate}>{fmtDate(u.ts)}</span></div>
-                  {u.text && <p style={S.timeText}>{u.text}</p>}
-                  {u.photos?.length > 0 && <PhotoGallery photos={u.photos} />}
-                  {u.solicitaVB && (
-                    <div style={S.vbTag}>
-                      <ThumbsUp size={13} /> <b>Solicitó visto bueno</b>
-                      {u.motivoVB && <span style={{ display: "block", marginTop: 4, fontWeight: 400, color: "var(--text)" }}>{u.motivoVB}</span>}
+                  <div style={S.timeHead}>
+                    <b>{author?.nombre || "—"}</b><span style={S.timePct}>{u.pct}%</span><span style={S.timeDate}>{fmtDate(u.ts)}</span>
+                    {puedeEditar && !enEdicion && (
+                      <button style={S.iconBtnXs} onClick={() => abrirEdicionAvance(u)} title="Editar redacción"><Pencil size={12} /></button>
+                    )}
+                  </div>
+                  {enEdicion ? (
+                    <div style={{ marginTop: 8 }}>
+                      <textarea style={S.textarea} rows={3} value={editTexto} onChange={(e) => setEditTexto(e.target.value)} placeholder="Corrige la redacción…" />
+                      <PhotoUploader photos={editFotos} setPhotos={setEditFotos} addPhotos={addEditFotos} busy={editBusy} />
+                      <div style={S.updateActions} className="actionrow">
+                        <button style={S.btnGhost} onClick={() => setEditandoAvance(null)}>Cancelar</button>
+                        <button style={S.btnPrimary} onClick={guardarEdicionAvance} disabled={editBusy}>Guardar cambios</button>
+                      </div>
                     </div>
+                  ) : (
+                    <>
+                      {u.text && <p style={S.timeText}>{u.text}</p>}
+                      {u.photos?.length > 0 && <PhotoGallery photos={u.photos} />}
+                      {u.solicitaVB && (
+                        <div style={S.vbTag}>
+                          <ThumbsUp size={13} /> <b>Solicitó visto bueno</b>
+                          {u.motivoVB && <span style={{ display: "block", marginTop: 4, fontWeight: 400, color: "var(--text)" }}>{u.motivoVB}</span>}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -923,6 +996,19 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
             Inició: {fmtDate(a.startedAt || a.createdAt)} · Terminó: {fmtDate(a.completedAt)}
           </p>
         </div>
+      )}
+
+      {/* Modal: admin edita la actividad */}
+      {editandoActividad && (
+        <ActivityForm companies={companies} members={users.filter((u) => u.rol === "member")}
+          initial={{ title: a.title, description: a.description, companyId: a.companyId, assignedTo: a.assignedTo, photos: a.photos }}
+          onClose={() => setEditandoActividad(false)}
+          onSave={async (data) => {
+            const cambioAsignado = data.assignedTo !== a.assignedTo;
+            await Api.updateActivity(a.id, data);
+            if (cambioAsignado) await Api.pushNotif(data.assignedTo, `Se te asignó la actividad: "${data.title}"`, a.id, "assign");
+            setEditandoActividad(false); reload();
+          }} />
       )}
 
       {/* Modal: admin niega el V°B° con explicación y fotos */}
@@ -1199,9 +1285,164 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
     </div>
   );
 }
+// ============ DETALLES / HALLAZGOS ============
+// Colaborador: reportar un detalle detectado en un recorrido
+function ReportarDetalle({ companies, profile, reload }) {
+  const [companyId, setCompanyId] = useState(companies[0]?.id || "");
+  const [titulo, setTitulo] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [fotos, setFotos] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [okMsg, setOkMsg] = useState("");
+  const [mios, setMios] = useState([]);
+
+  const cargarMios = async () => {
+    const todos = await Api.getDetalles();
+    setMios(todos.filter((d) => d.reportado_por === profile.id));
+  };
+  useEffect(() => { cargarMios(); }, []);
+
+  const addFotos = async (files) => {
+    setBusy(true);
+    const arr = [];
+    for (const f of Array.from(files).slice(0, 4)) { const r = await uploadPhoto(f); if (r.url) arr.push({ url: r.url, descripcion: "" }); }
+    setFotos((p) => [...p, ...arr].slice(0, 6));
+    setBusy(false);
+  };
+
+  const enviar = async () => {
+    if (!titulo.trim() || !companyId) return;
+    setSaving(true);
+    await Api.addDetalle({ companyId, reportadoPor: profile.id, titulo: titulo.trim(), descripcion: descripcion.trim(), fotos });
+    // Avisar a todos los administradores
+    const { data: admins } = await supabase.from("perfiles").select("id").eq("rol", "admin");
+    const emp = companies.find((c) => c.id === companyId)?.nombre || "";
+    for (const ad of (admins || [])) {
+      await Api.pushNotif(ad.id, `Nuevo detalle reportado en ${emp}: "${titulo.trim()}" (${profile.nombre})`, null, "info");
+    }
+    setTitulo(""); setDescripcion(""); setFotos([]); setSaving(false);
+    setOkMsg("¡Detalle enviado! El administrador lo revisará.");
+    cargarMios();
+    setTimeout(() => setOkMsg(""), 4000);
+  };
+
+  const estadoTag = (e) => e === "convertido" ? { t: "Convertido en actividad", c: "var(--green)" }
+    : e === "descartado" ? { t: "Descartado", c: "var(--muted)" }
+    : { t: "Pendiente de revisión", c: "var(--amber)" };
+
+  return (
+    <div>
+      <PageHead title="Reportar un detalle" sub="¿Detectaste algo en un recorrido? Repórtalo aquí." />
+      <div style={S.panel}>
+        <label style={S.label}>Empresa donde lo detectaste</label>
+        <select style={S.select} value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
+          {companies.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+        <label style={S.label}>¿Qué detectaste?</label>
+        <input style={S.input} value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Ej. Foco fundido en pasillo, pasamanos suelto…" />
+        <label style={S.label}>Detalles (opcional)</label>
+        <textarea style={S.textarea} rows={3} value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Ubicación exacta, gravedad, cualquier observación…" />
+        <label style={S.label}>Fotos</label>
+        <PhotoUploader photos={fotos} setPhotos={setFotos} addPhotos={addFotos} busy={busy} />
+        <button style={{ ...S.btnPrimary, marginTop: 14 }} onClick={enviar} disabled={!titulo.trim() || !companyId || saving || busy}>
+          {saving ? "Enviando…" : "Enviar detalle al administrador"}
+        </button>
+        {okMsg && <div style={{ ...S.okBox, marginTop: 12 }}><Check size={14} /> {okMsg}</div>}
+      </div>
+
+      {mios.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <h3 style={{ ...S.panelTitle, marginBottom: 12 }}>Detalles que has reportado</h3>
+          {mios.map((d) => {
+            const et = estadoTag(d.estado);
+            return (
+              <div key={d.id} style={S.detalleRow}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={S.detalleTitulo}>{d.titulo}</div>
+                  <div style={S.detalleMeta}>{companies.find((c) => c.id === d.empresa_id)?.nombre || "—"} · {fmtDate(d.creado)}</div>
+                </div>
+                <span style={{ ...S.pill, color: et.c, borderColor: et.c, whiteSpace: "nowrap" }}>{et.t}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Admin: revisar detalles y convertirlos en actividad
+function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
+  const [detalles, setDetalles] = useState([]);
+  const [convirtiendo, setConvirtiendo] = useState(null); // detalle a convertir
+  const [filtro, setFiltro] = useState("pendiente");
+
+  const cargar = async () => setDetalles(await Api.getDetalles());
+  useEffect(() => { cargar(); }, []);
+
+  const visibles = detalles.filter((d) => filtro === "todos" ? true : d.estado === filtro);
+  const chips = [
+    { id: "pendiente", label: `Pendientes (${detalles.filter((d) => d.estado === "pendiente").length})` },
+    { id: "convertido", label: `Convertidos (${detalles.filter((d) => d.estado === "convertido").length})` },
+    { id: "descartado", label: `Descartados (${detalles.filter((d) => d.estado === "descartado").length})` },
+    { id: "todos", label: "Todos" },
+  ];
+
+  return (
+    <div>
+      <PageHead title="Detalles reportados" sub="Hallazgos del equipo en recorridos" />
+      <div style={S.chipRow}>
+        {chips.map((c) => <button key={c.id} style={filtro === c.id ? S.chipActive : S.chip} onClick={() => setFiltro(c.id)}>{c.label}</button>)}
+      </div>
+      <div style={S.cardGrid} className="cardgrid">
+        {visibles.length === 0 && <Empty text="No hay detalles en este estado." />}
+        {visibles.map((d) => {
+          const emp = companies.find((c) => c.id === d.empresa_id);
+          const quien = users.find((u) => u.id === d.reportado_por);
+          return (
+            <div key={d.id} style={S.actCard}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <span style={S.detalleMeta}><Building2 size={12} /> {emp?.nombre || "—"}</span>
+                {d.estado === "convertido" && <span style={S.okTag}><Check size={11} /> Convertido</span>}
+                {d.estado === "descartado" && <span style={{ ...S.pill, color: "var(--muted)", borderColor: "var(--muted)" }}>Descartado</span>}
+              </div>
+              <h4 style={S.actCardTitle}>{d.titulo}</h4>
+              {d.descripcion && <p style={S.actCardDesc}>{d.descripcion}</p>}
+              <div style={S.detalleMeta}><User size={12} /> {quien?.nombre || "—"} · {fmtDate(d.creado)}</div>
+              {d.fotos?.length > 0 && <PhotoGallery photos={d.fotos} />}
+              {d.estado === "pendiente" && (
+                <div style={{ ...S.updateActions, marginTop: 12 }} className="actionrow">
+                  <button style={S.btnGhost} onClick={async () => { if (confirm("¿Descartar este detalle?")) { await Api.descartarDetalle(d.id); cargar(); } }}>Descartar</button>
+                  <button style={S.btnPrimary} onClick={() => setConvirtiendo(d)}><Plus size={15} /> Convertir en actividad</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {convirtiendo && (
+        <ActivityForm companies={companies} members={users.filter((u) => u.rol === "member")}
+          initial={{ title: convirtiendo.titulo, description: convirtiendo.descripcion, companyId: convirtiendo.empresa_id, assignedTo: "", photos: convirtiendo.fotos }}
+          onClose={() => setConvirtiendo(null)}
+          onSave={async (dataForm) => {
+            const row = await Api.createActivity(dataForm, profile.id);
+            if (row) {
+              await Api.detalleAActividad(convirtiendo, row.id);
+              await Api.pushNotif(dataForm.assignedTo, `Nueva actividad asignada: "${dataForm.title}"`, row.id, "assign");
+            }
+            setConvirtiendo(null); cargar(); reload();
+          }} />
+      )}
+    </div>
+  );
+}
+
 function MemberApp({ profile }) {
   const data = useData(profile);
   const [openActId, setOpenActId] = useState(null);
+  const [vista, setVista] = useState("actividades"); // actividades | detalle
   const logout = () => supabase.auth.signOut();
   const mine = data.activities.filter((a) => a.assignedTo === profile.id);
   const shared = { ...data, profile, onLogout: logout };
@@ -1221,24 +1462,42 @@ function MemberApp({ profile }) {
 
   const pending = mine.filter((a) => a.progress < 100);
   const done = mine.filter((a) => a.progress >= 100);
+  const navItems = [
+    { id: "actividades", label: "Mis actividades", icon: ClipboardList },
+    { id: "detalle", label: "Reportar detalle", icon: AlertCircle },
+  ];
   return (
     <>
       <TopBar {...shared} onOpenActivity={setOpenActId} />
       <div style={S.body} className="appbody">
-        <main style={{ ...S.main, marginLeft: 0 }} className="main">
-          <PageHead title={`Hola, ${profile.nombre.split(" ")[0]}`} sub="Tus actividades asignadas" />
-          <div style={S.kpiGrid} className="kpigrid">
-            <KpiCard icon={ClipboardList} label="Asignadas" value={mine.length} tone="accent" />
-            <KpiCard icon={Clock} label="Por completar" value={pending.length} tone="amber" />
-            <KpiCard icon={CheckCircle2} label="Completadas" value={done.length} tone="green" />
-          </div>
-          <div style={S.cardGrid} className="cardgrid">
-            {mine.length === 0 && <Empty text="No tienes actividades asignadas todavía." />}
-            {mine.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
-          </div>
+        <main style={{ ...S.main, marginLeft: 0, paddingBottom: 90 }} className="main">
+          {vista === "actividades" && (
+            <>
+              <PageHead title={`Hola, ${profile.nombre.split(" ")[0]}`} sub="Tus actividades asignadas" />
+              <div style={S.kpiGrid} className="kpigrid">
+                <KpiCard icon={ClipboardList} label="Asignadas" value={mine.length} tone="accent" />
+                <KpiCard icon={Clock} label="Por completar" value={pending.length} tone="amber" />
+                <KpiCard icon={CheckCircle2} label="Completadas" value={done.length} tone="green" />
+              </div>
+              <div style={S.cardGrid} className="cardgrid">
+                {mine.length === 0 && <Empty text="No tienes actividades asignadas todavía." />}
+                {mine.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
+              </div>
+            </>
+          )}
+          {vista === "detalle" && <ReportarDetalle companies={data.companies} profile={profile} reload={data.reload} />}
           <Footer />
         </main>
       </div>
+      {/* Barra de navegación inferior */}
+      <nav style={S.bottomNav}>
+        {navItems.map((n) => (
+          <button key={n.id} style={vista === n.id ? S.bottomNavItemActive : S.bottomNavItem} onClick={() => setVista(n.id)}>
+            <n.icon size={20} />
+            <span style={S.bottomNavLabel}>{n.label}</span>
+          </button>
+        ))}
+      </nav>
     </>
   );
 }
@@ -1375,6 +1634,7 @@ const S = {
   topRole: { fontSize: 11, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 },
   iconBtn: { position: "relative", width: 40, height: 40, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--line)", color: "var(--text)", display: "grid", placeItems: "center", cursor: "pointer" },
   iconBtnSm: { width: 32, height: 32, borderRadius: 8, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
+  iconBtnXs: { width: 24, height: 24, borderRadius: 6, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer", marginLeft: "auto" },
   badge: { position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px", borderRadius: 10, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid var(--surface)", boxSizing: "content-box" },
   notifPanel: { position: "absolute", top: 48, right: 0, width: 320, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,.5)", zIndex: 100, overflow: "hidden" },
   notifHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid var(--line)", fontSize: 13, fontWeight: 700 },
@@ -1425,6 +1685,14 @@ const S = {
   pill: { fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, border: "1px solid", letterSpacing: .3 },
   approvalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
   okTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--green)", background: "rgba(34,197,94,.12)", padding: "3px 9px", borderRadius: 20 },
+  okBox: { display: "flex", alignItems: "center", gap: 8, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.3)", color: "var(--green)", padding: "10px 14px", borderRadius: 10, fontSize: 13 },
+  bottomNav: { position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", background: "var(--surface)", borderTop: "1px solid var(--line)", zIndex: 50, paddingBottom: "env(safe-area-inset-bottom)" },
+  bottomNavItem: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 0", background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontFamily: "var(--body)" },
+  bottomNavItemActive: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 0", background: "transparent", border: "none", color: "var(--accent)", cursor: "pointer", fontFamily: "var(--body)" },
+  bottomNavLabel: { fontSize: 11, fontWeight: 600 },
+  detalleRow: { display: "flex", alignItems: "center", gap: 12, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, padding: "14px 16px", marginBottom: 10 },
+  detalleTitulo: { fontSize: 14, fontWeight: 600, color: "var(--text)" },
+  detalleMeta: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--muted)", marginTop: 2 },
   miniProgWrap: { display: "flex", alignItems: "center", gap: 8 },
   miniProgBar: { flex: 1, height: 6, background: "var(--bg)", borderRadius: 3, overflow: "hidden" },
   miniProgFill: { height: "100%", background: "var(--accent)", borderRadius: 3, transition: "width .4s" },
