@@ -861,10 +861,10 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={S.detailTopBar} className="detailtopbar">
         <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
         {isAdmin && (
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <button style={S.btnGhost} onClick={() => setEditandoActividad(true)}><Pencil size={14} /> Editar</button>
             <button style={S.btnDanger} onClick={async () => {
               if (confirm("¿Desea eliminar esta actividad? Esta acción no se puede deshacer.")) {
@@ -1216,6 +1216,30 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
   const [busy, setBusy] = useState(false);
   const [editUser, setEditUser] = useState(null); // integrante a editar
   const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPass, setEditPass] = useState("");
+  const [editErr, setEditErr] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+
+  const guardarEdicion = async () => {
+    setEditErr("");
+    if (!editName.trim()) { setEditErr("El nombre no puede quedar vacío."); return; }
+    if (editEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editEmail.trim())) { setEditErr("El correo no tiene un formato válido."); return; }
+    if (editPass.trim() && editPass.trim().length < 6) { setEditErr("La contraseña debe tener al menos 6 caracteres."); return; }
+    setEditBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke("crear-integrante", {
+        body: { accion: "actualizar", id: editUser.id, nombre: editName.trim(), email: editEmail.trim(), password: editPass.trim() },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error || data?.error) { setEditErr(data?.error || "No se pudo actualizar."); setEditBusy(false); return; }
+      setEditUser(null); setEditEmail(""); setEditPass(""); reload();
+    } catch (e) {
+      setEditErr("Error de conexión con el servidor.");
+    }
+    setEditBusy(false);
+  };
   const [verHistorial, setVerHistorial] = useState(null); // integrante cuyo historial se ve
 
   const members = users.filter((u) => u.rol === "member");
@@ -1263,7 +1287,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
                 <h4 style={S.entityName}>{m.nombre}</h4>
                 <div style={S.entityTag}>{assigned.length} asignadas · {doneN} completadas · ver historial</div>
               </div>
-              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); }} title="Editar nombre"><Pencil size={14} /></button>
+              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); setEditEmail(""); setEditPass(""); setEditErr(""); }} title="Editar integrante"><Pencil size={14} /></button>
             </div>
           );
         })}
@@ -1280,7 +1304,10 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
           {err && <div style={S.errBox}><AlertCircle size={14} /> {err}</div>}
           <div style={S.modalActions}>
             <button style={S.btnGhost} onClick={() => setAdding(false)}>Cancelar</button>
-            <button style={S.btnPrimary} onClick={save} disabled={busy}>{busy ? "Creando…" : "Crear integrante"}</button>
+            <button style={S.btnPrimary} onClick={save}
+              disabled={busy || !name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || pass.trim().length < 6}>
+              {busy ? "Creando…" : "Crear integrante"}
+            </button>
           </div>
         </Modal>
       )}
@@ -1288,10 +1315,19 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
         <Modal title="Editar integrante" onClose={() => setEditUser(null)}>
           <label style={S.label}>Nombre completo</label>
           <input style={S.input} value={editName} onChange={(e) => setEditName(e.target.value)} />
-          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>El correo y la contraseña no se editan desde aquí. Si el integrante necesita cambiar su contraseña, puede hacerlo iniciando sesión.</p>
+          <label style={S.label}>Correo de acceso</label>
+          <input style={S.input} value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="juan@correo.com" />
+          <label style={S.label}>Nueva contraseña</label>
+          <input style={S.input} value={editPass} onChange={(e) => setEditPass(e.target.value)} placeholder="Déjala vacía para no cambiarla" />
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+            Escribe el correo para asignárselo o corregirlo. La contraseña solo cambia si escribes una nueva (mínimo 6 caracteres); si la dejas vacía, se conserva la actual.
+          </p>
+          {editErr && <div style={S.errBox}><AlertCircle size={14} /> {editErr}</div>}
           <div style={S.modalActions}>
             <button style={S.btnGhost} onClick={() => setEditUser(null)}>Cancelar</button>
-            <button style={S.btnPrimary} onClick={async () => { if (editName.trim()) { await Api.updateUser(editUser.id, { nombre: editName.trim() }); setEditUser(null); reload(); } }} disabled={!editName.trim()}>Guardar cambios</button>
+            <button style={S.btnPrimary} onClick={guardarEdicion} disabled={editBusy || !editName.trim()}>
+              {editBusy ? "Guardando…" : "Guardar cambios"}
+            </button>
           </div>
         </Modal>
       )}
@@ -1649,6 +1685,7 @@ const S = {
   iconBtnSm: { width: 32, height: 32, borderRadius: 8, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
   iconBtnXs: { display: "inline-flex", alignItems: "center", gap: 4, height: 26, padding: "0 8px", borderRadius: 6, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.3)", color: "var(--accent)", cursor: "pointer", marginLeft: "auto", fontSize: 11, fontWeight: 600, fontFamily: "var(--body)" },
   btnDanger: { display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, background: "rgba(220,80,80,.12)", border: "1px solid rgba(220,80,80,.35)", color: "#f87171", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--body)" },
+  detailTopBar: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 4, flexWrap: "wrap" },
   badge: { position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px", borderRadius: 10, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid var(--surface)", boxSizing: "content-box" },
   notifPanel: { position: "absolute", top: 48, right: 0, width: 320, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,.5)", zIndex: 100, overflow: "hidden" },
   notifHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid var(--line)", fontSize: 13, fontWeight: 700 },
@@ -1803,6 +1840,9 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
   .twocol{ grid-template-columns:1fr !important; }
   .filterrow{ grid-template-columns:1fr !important; }
   .detailhead{ flex-direction:column !important; align-items:flex-start !important; }
+  .detailtopbar{ gap:10px !important; }
+  .detailtopbar > div{ width:100%; }
+  .detailtopbar > div > button{ flex:1; justify-content:center; }
   .topbar{ padding:0 14px !important; }
   /* Evitar desbordes: rejillas a una columna en móvil */
   .cardgrid{ grid-template-columns:1fr !important; }
