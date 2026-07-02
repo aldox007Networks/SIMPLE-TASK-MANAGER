@@ -205,6 +205,10 @@ const Api = {
       asignado_a: data.assignedTo, fotos: data.photos,
     }).eq("id", id);
   },
+  async delActivity(id) {
+    await supabase.from("avances").delete().eq("actividad_id", id);
+    await supabase.from("actividades").delete().eq("id", id);
+  },
   async updateAvance(id, text, photos) {
     await supabase.from("avances").update({ texto: text, fotos: photos }).eq("id", id);
   },
@@ -859,7 +863,16 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
-        {isAdmin && <button style={S.btnGhost} onClick={() => setEditandoActividad(true)}><Pencil size={14} /> Editar actividad</button>}
+        {isAdmin && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={S.btnGhost} onClick={() => setEditandoActividad(true)}><Pencil size={14} /> Editar</button>
+            <button style={S.btnDanger} onClick={async () => {
+              if (confirm("¿Desea eliminar esta actividad? Esta acción no se puede deshacer.")) {
+                await Api.delActivity(a.id); reload(); onBack();
+              }
+            }}><Trash2 size={14} /> Eliminar</button>
+          </div>
+        )}
       </div>
       <div style={S.detailHead} className="detailhead">
         <div style={{ flex: 1 }}>
@@ -956,7 +969,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
                   <div style={S.timeHead}>
                     <b>{author?.nombre || "—"}</b><span style={S.timePct}>{u.pct}%</span><span style={S.timeDate}>{fmtDate(u.ts)}</span>
                     {puedeEditar && !enEdicion && (
-                      <button style={S.iconBtnXs} onClick={() => abrirEdicionAvance(u)} title="Editar redacción"><Pencil size={12} /></button>
+                      <button style={S.iconBtnXs} onClick={() => abrirEdicionAvance(u)} title="Editar redacción"><Pencil size={11} /> Editar</button>
                     )}
                   </div>
                   {enEdicion ? (
@@ -1634,7 +1647,8 @@ const S = {
   topRole: { fontSize: 11, color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 },
   iconBtn: { position: "relative", width: 40, height: 40, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--line)", color: "var(--text)", display: "grid", placeItems: "center", cursor: "pointer" },
   iconBtnSm: { width: 32, height: 32, borderRadius: 8, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
-  iconBtnXs: { width: 24, height: 24, borderRadius: 6, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer", marginLeft: "auto" },
+  iconBtnXs: { display: "inline-flex", alignItems: "center", gap: 4, height: 26, padding: "0 8px", borderRadius: 6, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.3)", color: "var(--accent)", cursor: "pointer", marginLeft: "auto", fontSize: 11, fontWeight: 600, fontFamily: "var(--body)" },
+  btnDanger: { display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, background: "rgba(220,80,80,.12)", border: "1px solid rgba(220,80,80,.35)", color: "#f87171", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--body)" },
   badge: { position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px", borderRadius: 10, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid var(--surface)", boxSizing: "content-box" },
   notifPanel: { position: "absolute", top: 48, right: 0, width: 320, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,.5)", zIndex: 100, overflow: "hidden" },
   notifHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid var(--line)", fontSize: 13, fontWeight: 700 },
