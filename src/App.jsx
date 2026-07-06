@@ -58,6 +58,36 @@ async function uploadPhoto(file) {
 const photoUrl = (p) => (typeof p === "string" ? p : p?.url || "");
 const photoDesc = (p) => (typeof p === "string" ? "" : p?.descripcion || "");
 
+// Periodicidades disponibles y cuánto suman
+const PERIODOS = [
+  { id: "diaria", label: "Diaria", dias: 1 },
+  { id: "semanal", label: "Semanal", dias: 7 },
+  { id: "quincenal", label: "Quincenal", dias: 15 },
+  { id: "mensual", label: "Mensual", meses: 1 },
+  { id: "bimestral", label: "Bimestral", meses: 2 },
+  { id: "trimestral", label: "Trimestral", meses: 3 },
+  { id: "semestral", label: "Semestral", meses: 6 },
+  { id: "anual", label: "Anual", meses: 12 },
+];
+const periodoLabel = (id) => PERIODOS.find((p) => p.id === id)?.label || "";
+
+// Calcula la siguiente fecha a partir de una fecha y una periodicidad
+function siguienteFecha(fechaBase, periodicidad) {
+  const p = PERIODOS.find((x) => x.id === periodicidad);
+  if (!p) return null;
+  const d = fechaBase ? new Date(fechaBase + "T00:00:00") : new Date();
+  if (p.dias) d.setDate(d.getDate() + p.dias);
+  if (p.meses) d.setMonth(d.getMonth() + p.meses);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+// ¿La fecha programada ya pasó? (para marcar "vencida")
+function estaVencida(fechaProgramada, progress) {
+  if (!fechaProgramada || progress >= 100) return false;
+  const hoy = new Date().toISOString().slice(0, 10);
+  return fechaProgramada < hoy;
+}
+
 // ============ APP ============
 export default function App() {
   const [session, setSession] = useState(null);
@@ -180,6 +210,7 @@ function normalizeActivity(a) {
     motivoAprobacion: a.motivo_aprobacion,
     rejected: a.rechazada, motivoRechazo: a.motivo_rechazo, fotosRechazo: a.fotos_rechazo || [],
     startedAt: a.iniciada, completedAt: a.completada_en,
+    periodicidad: a.periodicidad, fechaProgramada: a.fecha_programada, serieId: a.serie_id,
     updates: (a.avances || []).map((u) => ({
       id: u.id, by: u.autor_id, text: u.texto, photos: u.fotos || [], pct: u.progreso, ts: u.creado,
       solicitaVB: u.solicita_vb, motivoVB: u.motivo_vb,
@@ -196,6 +227,9 @@ const Api = {
     const { data: row } = await supabase.from("actividades").insert({
       titulo: data.title, descripcion: data.description, empresa_id: data.companyId,
       asignado_a: data.assignedTo, fotos: data.photos, creado_por: createdBy,
+      periodicidad: data.periodicidad || null,
+      fecha_programada: data.fechaProgramada || null,
+      serie_id: data.serieId || null,
     }).select().single();
     return row;
   },
@@ -203,6 +237,8 @@ const Api = {
     await supabase.from("actividades").update({
       titulo: data.title, descripcion: data.description, empresa_id: data.companyId,
       asignado_a: data.assignedTo, fotos: data.photos,
+      periodicidad: data.periodicidad || null,
+      fecha_programada: data.fechaProgramada || null,
     }).eq("id", id);
   },
   async delActivity(id) {
@@ -229,6 +265,21 @@ const Api = {
       patch.motivo_rechazo = null;
     }
     await supabase.from("actividades").update(patch).eq("id", activityId);
+
+    // Si es recurrente y se acaba de completar, generar la siguiente repetición
+    if (pct >= 100 && activity?.progress < 100 && activity?.periodicidad) {
+      const nuevaFecha = siguienteFecha(activity.fechaProgramada, activity.periodicidad);
+      const { data: nueva } = await supabase.from("actividades").insert({
+        titulo: activity.title, descripcion: activity.description, empresa_id: activity.companyId,
+        asignado_a: activity.assignedTo, fotos: activity.photos, creado_por: activity.createdBy,
+        periodicidad: activity.periodicidad, fecha_programada: nuevaFecha,
+        serie_id: activity.serieId || activity.id,
+      }).select().single();
+      // Avisar al responsable de la nueva repetición programada
+      if (nueva) {
+        await this.pushNotif(activity.assignedTo, `Nueva actividad programada: "${activity.title}" para el ${nuevaFecha}`, nueva.id, "assign");
+      }
+    }
   },
   async setApprovalRequested(activityId, val, motivo = null) {
     await supabase.from("actividades").update({ aprobacion_solicitada: val, motivo_aprobacion: motivo, rechazada: false, motivo_rechazo: null }).eq("id", activityId);
@@ -664,11 +715,15 @@ function ActivityCard({ a, companies, users, onClick }) {
   const comp = companies.find((c) => c.id === a.companyId);
   const who = users.find((u) => u.id === a.assignedTo);
   const status = a.progress >= 100 ? "done" : a.progress > 0 ? "progress" : "pending";
+  const vencida = estaVencida(a.fechaProgramada, a.progress);
   return (
-    <div style={S.actCard} onClick={onClick}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+    <div style={{ ...S.actCard, ...(vencida ? { borderColor: "rgba(220,80,80,.5)" } : {}) }} onClick={onClick}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <StatusPill status={status} />
-        {a.approvalRequested && <span style={S.approvalTag}><ThumbsUp size={11} /> V°B° pendiente</span>}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {a.periodicidad && <span style={S.recurTag}><Clock size={11} /> {periodoLabel(a.periodicidad)}</span>}
+          {a.approvalRequested && <span style={S.approvalTag}><ThumbsUp size={11} /> V°B° pendiente</span>}
+        </div>
       </div>
       <h4 style={S.actCardTitle}>{a.title}</h4>
       <p style={S.actCardDesc}>{a.description}</p>
@@ -676,10 +731,22 @@ function ActivityCard({ a, companies, users, onClick }) {
         <span><Building2 size={12} /> {comp?.nombre || "—"}</span>
         <span><User size={12} /> {who?.nombre || "Sin asignar"}</span>
       </div>
+      {a.fechaProgramada && (
+        <div style={vencida ? S.fechaVencida : S.fechaProg}>
+          <Timer size={12} /> {vencida ? "Vencida: " : "Programada: "}{fmtFecha(a.fechaProgramada)}
+        </div>
+      )}
       {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => <img key={i} src={photoUrl(p)} style={{ ...S.thumb, cursor: "pointer" }} alt="" onClick={(e) => { e.stopPropagation(); openLightbox(a.photos, i); }} />)}</div>}
       <MiniProgress value={a.progress} full />
     </div>
   );
+}
+
+// Formatea una fecha YYYY-MM-DD a algo legible (ej. 15 mar 2026)
+function fmtFecha(f) {
+  if (!f) return "";
+  const d = new Date(f + "T00:00:00");
+  return d.toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" });
 }
 
 // ============ FORM ACTIVIDAD ============
@@ -689,6 +756,8 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
   const [companyId, setCompanyId] = useState(initial?.companyId || companies[0]?.id || "");
   const [assignedTo, setAssignedTo] = useState(initial?.assignedTo || members[0]?.id || "");
   const [photos, setPhotos] = useState(initial?.photos || []);
+  const [periodicidad, setPeriodicidad] = useState(initial?.periodicidad || "");
+  const [fechaProgramada, setFechaProgramada] = useState(initial?.fechaProgramada || "");
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoErr, setPhotoErr] = useState("");
@@ -729,10 +798,32 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
       <label style={S.label}>Fotos de referencia</label>
       <PhotoUploader photos={photos} setPhotos={setPhotos} addPhotos={addPhotos} busy={busy} />
       {photoErr && <div style={S.errBox}><AlertCircle size={14} /> {photoErr}</div>}
+
+      <div style={{ borderTop: "1px solid var(--line)", margin: "18px 0 14px" }} />
+      <label style={S.label}>Programación (opcional)</label>
+      <div style={S.formRow} className="formrow">
+        <div style={{ flex: 1 }}>
+          <label style={{ ...S.label, fontSize: 12, color: "var(--muted)" }}>Fecha en que toca</label>
+          <input style={S.input} type="date" value={fechaProgramada || ""} onChange={(e) => setFechaProgramada(e.target.value)} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ ...S.label, fontSize: 12, color: "var(--muted)" }}>Repetir</label>
+          <select style={S.select} value={periodicidad} onChange={(e) => setPeriodicidad(e.target.value)}>
+            <option value="">No se repite</option>
+            {PERIODOS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </div>
+      </div>
+      {periodicidad && (
+        <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+          Al completarse, se generará automáticamente la siguiente ({periodoLabel(periodicidad).toLowerCase()}) para el responsable.
+        </p>
+      )}
+
       <div style={S.modalActions}>
         <button style={S.btnGhost} onClick={onClose}>Cancelar</button>
         <button style={S.btnPrimary} disabled={!title.trim() || !companyId || !assignedTo || saving || busy}
-          onClick={async () => { setSaving(true); await onSave({ title: title.trim(), description: description.trim(), companyId, assignedTo, photos }); }}>
+          onClick={async () => { setSaving(true); await onSave({ title: title.trim(), description: description.trim(), companyId, assignedTo, photos, periodicidad, fechaProgramada }); }}>
           {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : "Crear y asignar"}
         </button>
       </div>
@@ -1735,9 +1826,12 @@ const S = {
   thumbDel: { position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: 11, background: "#1a1a1a", border: "1px solid var(--line)", color: "#fff", display: "grid", placeItems: "center", cursor: "pointer" },
   pill: { fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, border: "1px solid", letterSpacing: .3 },
   approvalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
+  recurTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#60a5fa", background: "rgba(96,165,250,.12)", padding: "3px 9px", borderRadius: 20 },
+  fechaProg: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--muted)", marginTop: 8, background: "var(--bg)", padding: "5px 10px", borderRadius: 8, alignSelf: "flex-start" },
+  fechaVencida: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "#f87171", marginTop: 8, background: "rgba(220,80,80,.1)", padding: "5px 10px", borderRadius: 8, alignSelf: "flex-start" },
   okTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--green)", background: "rgba(34,197,94,.12)", padding: "3px 9px", borderRadius: 20 },
   okBox: { display: "flex", alignItems: "center", gap: 8, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.3)", color: "var(--green)", padding: "10px 14px", borderRadius: 10, fontSize: 13 },
-  bottomNav: { position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", background: "var(--surface)", borderTop: "1px solid var(--line)", zIndex: 50, paddingBottom: "env(safe-area-inset-bottom)" },
+  bottomNav: { position: "fixed", bottom: 0, left: 0, right: 0, display: "flex", background: "var(--surface)", borderTop: "1px solid var(--line)", zIndex: 200, paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -2px 12px rgba(0,0,0,.35)" },
   bottomNavItem: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 0", background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontFamily: "var(--body)" },
   bottomNavItemActive: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 0", background: "transparent", border: "none", color: "var(--accent)", cursor: "pointer", fontFamily: "var(--body)" },
   bottomNavLabel: { fontSize: 11, fontWeight: 600 },
@@ -1823,13 +1917,16 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
   /* El menú lateral pasa a ser barra inferior fija */
   .appbody{ display:block !important; }
   .sidenav{
-    position:fixed !important; bottom:0; left:0; right:0; top:auto !important;
+    position:fixed !important; bottom:0 !important; left:0 !important; right:0 !important; top:auto !important;
     width:100% !important; min-height:0 !important;
     display:flex !important; flex-direction:row !important;
     justify-content:space-around; align-items:center;
     padding:6px 4px !important; gap:2px;
     border-right:none !important; border-top:1px solid var(--line);
-    z-index:60; box-sizing:border-box;
+    z-index:200 !important; box-sizing:border-box;
+    background:var(--surface) !important;
+    padding-bottom:calc(6px + env(safe-area-inset-bottom)) !important;
+    box-shadow:0 -2px 12px rgba(0,0,0,.35);
   }
   .navitem, .navitem.active{ flex-direction:column !important; gap:3px !important;
     font-size:10px !important; padding:7px 4px !important; margin:0 !important;
