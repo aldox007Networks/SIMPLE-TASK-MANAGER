@@ -6,6 +6,7 @@ import {
   Plus, X, Camera, Check, AlertCircle, ChevronRight, Trash2,
   TrendingUp, Clock, CheckCircle2, FileText, Image as ImageIcon,
   ThumbsUp, Send, User, Download, Shield, Pencil, Quote, ThumbsDown, Timer,
+  Eye, EyeOff,
 } from "lucide-react";
 
 // ============ UTILIDADES ============
@@ -392,7 +393,7 @@ function Login() {
       <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)}
         placeholder="correo@ejemplo.com" onKeyDown={(e) => e.key === "Enter" && submit()} />
       <label style={S.label}>Contraseña</label>
-      <input style={S.input} type="password" value={pass} onChange={(e) => setPass(e.target.value)}
+      <PasswordInput value={pass} onChange={(e) => setPass(e.target.value)}
         placeholder="••••••" onKeyDown={(e) => e.key === "Enter" && submit()} />
 
       {err && <div style={S.errBox}><AlertCircle size={14} /> {err}</div>}
@@ -1414,7 +1415,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
           <label style={S.label}>Correo</label>
           <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="juan@correo.com" />
           <label style={S.label}>Contraseña temporal</label>
-          <input style={S.input} value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Mínimo 6 caracteres" />
+          <PasswordInput value={pass} onChange={(e) => setPass(e.target.value)} placeholder="Mínimo 6 caracteres" />
           <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Comparte el correo y esta contraseña con el integrante. Podrá cambiarla después.</p>
           {err && <div style={S.errBox}><AlertCircle size={14} /> {err}</div>}
           <div style={S.modalActions}>
@@ -1433,7 +1434,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
           <label style={S.label}>Correo de acceso</label>
           <input style={S.input} value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="juan@correo.com" />
           <label style={S.label}>Nueva contraseña</label>
-          <input style={S.input} value={editPass} onChange={(e) => setEditPass(e.target.value)} placeholder="Déjala vacía para no cambiarla" />
+          <PasswordInput value={editPass} onChange={(e) => setEditPass(e.target.value)} placeholder="Déjala vacía para no cambiarla" />
           <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
             Escribe el correo para asignárselo o corregirlo. La contraseña solo cambia si escribes una nueva (mínimo 6 caracteres); si la dejas vacía, se conserva la actual.
           </p>
@@ -1708,6 +1709,32 @@ function BarRow({ label, value, total, color, pct }) {
   const w = total ? (value / total) * 100 : 0;
   return <div style={S.barRow}><div style={S.barLabel} className="barlabel">{label}</div><div style={S.barTrack}><div style={{ ...S.barFill, width: w + "%", background: color }} /></div><div style={S.barVal}>{pct ? value + "%" : value}</div></div>;
 }
+// Campo de contraseña con botón para mostrar/ocultar (ojito)
+function PasswordInput({ value, onChange, placeholder, onKeyDown }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        style={{ ...S.input, paddingRight: 44 }}
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        onKeyDown={onKeyDown}
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        style={S.eyeBtn}
+        title={show ? "Ocultar contraseña" : "Mostrar contraseña"}
+        tabIndex={-1}
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
+
 function Modal({ title, children, onClose }) {
   return <div style={S.overlay} className="overlaymodal" onClick={onClose}><div style={S.modal} onClick={(e) => e.stopPropagation()}><div style={S.modalHead}><h3 style={S.modalTitle}>{title}</h3><button style={S.iconBtnSm} onClick={onClose}><X size={18} /></button></div><div style={S.modalBody}>{children}</div></div></div>;
 }
@@ -1796,6 +1823,7 @@ const S = {
   hint: { textAlign: "center", fontSize: 12, color: "var(--muted)", marginTop: 16 },
   label: { display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted)", margin: "14px 0 6px", letterSpacing: .3 },
   input: { width: "100%", boxSizing: "border-box", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "11px 13px", color: "var(--text)", fontSize: 14, fontFamily: "var(--body)", outline: "none" },
+  eyeBtn: { position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 30, height: 30, borderRadius: 7, background: "transparent", border: "none", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
   textarea: { width: "100%", boxSizing: "border-box", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "11px 13px", color: "var(--text)", fontSize: 14, fontFamily: "var(--body)", outline: "none", resize: "vertical" },
   select: { width: "100%", boxSizing: "border-box", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "11px 13px", color: "var(--text)", fontSize: 14, fontFamily: "var(--body)", outline: "none", cursor: "pointer" },
   range: { width: "100%", accentColor: "var(--accent)", marginTop: 6 },
