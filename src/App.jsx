@@ -341,39 +341,15 @@ function Splash() {
 
 // ============ LOGIN ============
 function Login() {
-  const [mode, setMode] = useState("login"); // login | setup
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
-  const [name, setName] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [adminExists, setAdminExists] = useState(true);
-
-  // ¿Ya existe algún perfil? Si no, permitimos crear el primer administrador.
-  useEffect(() => {
-    supabase.from("perfiles").select("*", { count: "exact", head: true })
-      .then(({ count }) => setAdminExists((count || 0) > 0));
-  }, []);
 
   const submit = async () => {
     setErr(""); setBusy(true);
-    if (mode === "login") {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pass });
-      if (error) setErr("Correo o contraseña incorrectos.");
-    } else {
-      // Configuración inicial: crea el primer administrador (solo si no existe ninguno)
-      const nombre = name.trim() || email.trim();
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(), password: pass,
-        options: { data: { nombre, rol: "admin" } },
-      });
-      if (error) { setErr(error.message); setBusy(false); return; }
-      if (data?.user) {
-        await supabase.from("perfiles").upsert({ id: data.user.id, nombre, rol: "admin" }, { onConflict: "id" });
-      }
-      setErr("Administrador creado. Ya puedes iniciar sesión.");
-      setMode("login");
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pass });
+    if (error) setErr("Correo o contraseña incorrectos.");
     setBusy(false);
   };
 
@@ -383,12 +359,6 @@ function Login() {
       <h1 style={S.loginTitle}>iTask</h1>
       <p style={S.loginSub}>Control y seguimiento de actividades</p>
 
-      {mode === "setup" && (
-        <>
-          <label style={S.label}>Nombre completo</label>
-          <input style={S.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Tu nombre" />
-        </>
-      )}
       <label style={S.label}>Correo</label>
       <input style={S.input} value={email} onChange={(e) => setEmail(e.target.value)}
         placeholder="correo@ejemplo.com" onKeyDown={(e) => e.key === "Enter" && submit()} />
@@ -399,16 +369,8 @@ function Login() {
       {err && <div style={S.errBox}><AlertCircle size={14} /> {err}</div>}
 
       <button style={{ ...S.btnPrimary, marginTop: 16, opacity: busy ? 0.6 : 1 }} onClick={submit} disabled={busy}>
-        {busy ? "Procesando…" : mode === "login" ? "Entrar" : "Crear administrador"}
+        {busy ? "Procesando…" : "Entrar"}
       </button>
-
-      {!adminExists && (
-        <p style={S.hint}>
-          {mode === "login"
-            ? <>¿Primera vez? <button style={S.linkBtn} onClick={() => { setMode("setup"); setErr(""); }}>Configura la cuenta de administrador</button></>
-            : <>¿Ya la creaste? <button style={S.linkBtn} onClick={() => { setMode("login"); setErr(""); }}>Inicia sesión</button></>}
-        </p>
-      )}
     </div>
   );
 }
