@@ -331,7 +331,7 @@ function Splash() {
     <div style={{ ...S.root, display: "grid", placeItems: "center" }}>
       <style>{CSS}</style>
       <div style={{ textAlign: "center" }}>
-        <img src="/icono-512.png" alt="Centro de Operaciones" style={S.logoMark} />
+        <img src="/icono-512.png" alt="iTask" style={S.logoMark} />
         <p style={{ color: "var(--muted)", marginTop: 16, letterSpacing: 2, fontSize: 12 }}>CARGANDO…</p>
       </div>
     </div>
@@ -378,8 +378,8 @@ function Login() {
 
   return (
     <div style={S.loginCard}>
-      <img src="/icono-512.png" alt="Centro de Operaciones" style={S.logoMark} />
-      <h1 style={S.loginTitle}>Centro de Operaciones</h1>
+      <img src="/icono-512.png" alt="iTask" style={S.logoMark} />
+      <h1 style={S.loginTitle}>iTask</h1>
       <p style={S.loginSub}>Control y seguimiento de actividades</p>
 
       {mode === "setup" && (
@@ -436,7 +436,7 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
   return (
     <div style={S.topbar}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <img src="/icono-512.png" alt="Centro de Operaciones" style={S.logoMarkSm} />
+        <img src="/icono-512.png" alt="iTask" style={S.logoMarkSm} />
         <div>
           <div style={S.topName}>{profile.nombre}</div>
           <div style={S.topRole}>
@@ -803,7 +803,7 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
       <label style={S.label}>Programación (opcional)</label>
       <div style={S.formRow} className="formrow">
         <div style={{ flex: 1 }}>
-          <label style={{ ...S.label, fontSize: 12, color: "var(--muted)" }}>Fecha en que toca</label>
+          <label style={{ ...S.label, fontSize: 12, color: "var(--muted)" }}>Fecha de inicio específica</label>
           <input style={S.input} type="date" value={fechaProgramada || ""} onChange={(e) => setFechaProgramada(e.target.value)} />
         </div>
         <div style={{ flex: 1 }}>
@@ -1018,7 +1018,23 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
         </div>
       )}
 
-      {!isAdmin && a.assignedTo === profile.id && (
+      {!isAdmin && a.assignedTo === profile.id && (() => {
+        const hoy = new Date().toISOString().slice(0, 10);
+        const aunNoInicia = a.fechaProgramada && a.fechaProgramada > hoy;
+        if (aunNoInicia) {
+          return (
+            <div style={S.panel}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#60a5fa" }}>
+                <Clock size={18} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Esta actividad inicia el {fmtFecha(a.fechaProgramada)}.</span>
+              </div>
+              <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 8, marginBottom: 0 }}>
+                Podrás reportar avances a partir de esa fecha.
+              </p>
+            </div>
+          );
+        }
+        return (
         <div style={S.panel}>
           <h3 style={S.panelTitle}><Send size={14} /> Reportar avance</h3>
           <textarea style={S.textarea} rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Describe lo realizado, observaciones o pendientes…" />
@@ -1043,7 +1059,8 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
             {saving ? "Guardando…" : pideVB ? "Guardar avance y solicitar V°B°" : pct >= 100 ? "Marcar 100% y notificar" : "Guardar avance"}
           </button>
         </div>
-      )}
+        );
+      })()}
 
       <div style={S.panel}>
         <h3 style={S.panelTitle}><ClipboardList size={14} /> Bitácora de avances</h3>
@@ -1312,6 +1329,13 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
   const [editErr, setEditErr] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
+  const promoverAdmin = async () => {
+    if (!confirm(`Está a punto de darle privilegio de administrador a: "${editUser.nombre}", ¿puede confirmar esta asignación?`)) return;
+    setEditBusy(true);
+    await Api.updateUser(editUser.id, { rol: "admin" });
+    setEditBusy(false); setEditUser(null); reload();
+  };
+
   const guardarEdicion = async () => {
     setEditErr("");
     if (!editName.trim()) { setEditErr("El nombre no puede quedar vacío."); return; }
@@ -1414,6 +1438,18 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
             Escribe el correo para asignárselo o corregirlo. La contraseña solo cambia si escribes una nueva (mínimo 6 caracteres); si la dejas vacía, se conserva la actual.
           </p>
           {editErr && <div style={S.errBox}><AlertCircle size={14} /> {editErr}</div>}
+
+          <div style={{ borderTop: "1px solid var(--line)", margin: "16px 0 12px" }} />
+          <label style={S.label}>Rol</label>
+          {editUser.rol === "admin" ? (
+            <div style={{ ...S.okBox, marginTop: 4 }}><Shield size={14} /> Esta persona ya es administrador.</div>
+          ) : (
+            <button style={{ ...S.btnGhost, width: "100%", justifyContent: "center", borderColor: "var(--accent)", color: "var(--accent)" }}
+              onClick={promoverAdmin} disabled={editBusy}>
+              <Shield size={14} /> Convertir en administrador
+            </button>
+          )}
+
           <div style={S.modalActions}>
             <button style={S.btnGhost} onClick={() => setEditUser(null)}>Cancelar</button>
             <button style={S.btnPrimary} onClick={guardarEdicion} disabled={editBusy || !editName.trim()}>
@@ -1673,7 +1709,7 @@ function BarRow({ label, value, total, color, pct }) {
   return <div style={S.barRow}><div style={S.barLabel} className="barlabel">{label}</div><div style={S.barTrack}><div style={{ ...S.barFill, width: w + "%", background: color }} /></div><div style={S.barVal}>{pct ? value + "%" : value}</div></div>;
 }
 function Modal({ title, children, onClose }) {
-  return <div style={S.overlay} onClick={onClose}><div style={S.modal} onClick={(e) => e.stopPropagation()}><div style={S.modalHead}><h3 style={S.modalTitle}>{title}</h3><button style={S.iconBtnSm} onClick={onClose}><X size={18} /></button></div><div style={S.modalBody}>{children}</div></div></div>;
+  return <div style={S.overlay} className="overlaymodal" onClick={onClose}><div style={S.modal} onClick={(e) => e.stopPropagation()}><div style={S.modalHead}><h3 style={S.modalTitle}>{title}</h3><button style={S.iconBtnSm} onClick={onClose}><X size={18} /></button></div><div style={S.modalBody}>{children}</div></div></div>;
 }
 function Empty({ text, mini }) {
   return <div style={{ ...S.empty, padding: mini ? "20px" : "48px 24px" }}><ClipboardList size={mini ? 20 : 32} color="var(--muted)" /><p style={{ margin: "8px 0 0", color: "var(--muted)", fontSize: 13 }}>{text}</p></div>;
@@ -1682,7 +1718,7 @@ function Empty({ text, mini }) {
 function Footer() {
   return (
     <div style={S.footer}>
-      <img src="/logo-op.png" alt="Centro de Operaciones" style={S.footerLogo} />
+      <img src="/logo-op.png" alt="iTask" style={S.footerLogo} />
       <div style={S.footerText}>All rights reserved · Aldox Networks © 2026</div>
     </div>
   );
@@ -1827,7 +1863,7 @@ const S = {
   pill: { fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, border: "1px solid", letterSpacing: .3 },
   approvalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
   recurTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#60a5fa", background: "rgba(96,165,250,.12)", padding: "3px 9px", borderRadius: 20 },
-  fechaProg: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--muted)", marginTop: 8, background: "var(--bg)", padding: "5px 10px", borderRadius: 8, alignSelf: "flex-start" },
+  fechaProg: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#60a5fa", marginTop: 10, background: "rgba(96,165,250,.12)", border: "1px solid rgba(96,165,250,.3)", padding: "7px 12px", borderRadius: 10, alignSelf: "flex-start" },
   fechaVencida: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "#f87171", marginTop: 8, background: "rgba(220,80,80,.1)", padding: "5px 10px", borderRadius: 8, alignSelf: "flex-start" },
   okTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--green)", background: "rgba(34,197,94,.12)", padding: "3px 9px", borderRadius: 20 },
   okBox: { display: "flex", alignItems: "center", gap: 8, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.3)", color: "var(--green)", padding: "10px 14px", borderRadius: 10, fontSize: 13 },
@@ -1953,5 +1989,10 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
   select, input, textarea{ max-width:100% !important; }
   /* Tarjetas KPI con texto que no rebase */
   .kpigrid > div{ min-width:0 !important; overflow:hidden; }
+  /* Modal ocupa casi todo el ancho en móvil */
+  .overlaymodal{ padding:10px !important; }
 }
-* { min-width: 0; }`;
+*, *::before, *::after { box-sizing: border-box; }
+* { min-width: 0; }
+img, video, canvas { max-width: 100%; height: auto; }
+h1, h2, h3, h4, p, span, div { overflow-wrap: anywhere; word-break: break-word; }`;
