@@ -57,6 +57,13 @@ async function uploadPhoto(file) {
 
 // Helpers: una foto puede ser un string (formato viejo) o { url, descripcion } (nuevo)
 const photoUrl = (p) => (typeof p === "string" ? p : p?.url || "");
+
+// Helpers de rol/clasificación
+const esAdmin = (perfil) => perfil?.rol === "admin";
+const esSupervisor = (perfil) => perfil?.rol === "member" && perfil?.clasificacion === "supervisor";
+const esEspecialista = (perfil) => perfil?.rol === "member" && perfil?.clasificacion !== "supervisor";
+// ¿Puede gestionar prioridades y dar seguimiento? (admin o supervisor)
+const puedeSupervisar = (perfil) => esAdmin(perfil) || esSupervisor(perfil);
 const photoDesc = (p) => (typeof p === "string" ? "" : p?.descripcion || "");
 
 // Periodicidades disponibles y cuánto suman
@@ -212,6 +219,9 @@ function normalizeActivity(a) {
     rejected: a.rechazada, motivoRechazo: a.motivo_rechazo, fotosRechazo: a.fotos_rechazo || [],
     startedAt: a.iniciada, completedAt: a.completada_en,
     periodicidad: a.periodicidad, fechaProgramada: a.fecha_programada, serieId: a.serie_id,
+    altaPrioridad: a.alta_prioridad, enterado: a.enterado, enteradoEn: a.enterado_en,
+    prioridadTerminada: a.prioridad_terminada, prioridadTerminadaEn: a.prioridad_terminada_en,
+    vbTerminacion: a.vb_terminacion, vbTerminacionEn: a.vb_terminacion_en,
     updates: (a.avances || []).map((u) => ({
       id: u.id, by: u.autor_id, text: u.texto, photos: u.fotos || [], pct: u.progreso, ts: u.creado,
       solicitaVB: u.solicita_vb, motivoVB: u.motivo_vb,
@@ -231,6 +241,7 @@ const Api = {
       periodicidad: data.periodicidad || null,
       fecha_programada: data.fechaProgramada || null,
       serie_id: data.serieId || null,
+      alta_prioridad: data.altaPrioridad || false,
     }).select().single();
     return row;
   },
@@ -240,7 +251,28 @@ const Api = {
       asignado_a: data.assignedTo, fotos: data.photos,
       periodicidad: data.periodicidad || null,
       fecha_programada: data.fechaProgramada || null,
+      alta_prioridad: data.altaPrioridad || false,
     }).eq("id", id);
+  },
+  // El especialista confirma que vio la prioridad
+  async marcarEnterado(activityId) {
+    await supabase.from("actividades").update({ enterado: true, enterado_en: new Date().toISOString() }).eq("id", activityId);
+  },
+  // Admin/Supervisor marca la prioridad como atendida satisfactoriamente
+  async terminarPrioridad(activityId) {
+    await supabase.from("actividades").update({ prioridad_terminada: true, prioridad_terminada_en: new Date().toISOString() }).eq("id", activityId);
+  },
+  // Admin da el visto bueno final de terminación
+  async vistoBuenoTerminacion(activityId) {
+    await supabase.from("actividades").update({ vb_terminacion: true, vb_terminacion_en: new Date().toISOString() }).eq("id", activityId);
+  },
+  // Observaciones (para prioridades)
+  async addObservacion(activityId, autorId, texto) {
+    await supabase.from("observaciones").insert({ actividad_id: activityId, autor_id: autorId, texto });
+  },
+  async getObservaciones(activityId) {
+    const { data } = await supabase.from("observaciones").select("*").eq("actividad_id", activityId).order("creado", { ascending: true });
+    return data || [];
   },
   async delActivity(id) {
     await supabase.from("avances").delete().eq("actividad_id", id);
@@ -467,6 +499,7 @@ function AdminApp({ profile }) {
     { id: "dash", label: "Panel", icon: LayoutDashboard },
     { id: "activities", label: "Actividades", icon: ClipboardList },
     { id: "detalles", label: "Detalles", icon: AlertCircle },
+    { id: "prioridades", label: "Prioridades", icon: Shield },
     { id: "companies", label: "Empresas", icon: Building2 },
     { id: "team", label: "Equipo", icon: Users },
     { id: "frases", label: "Frases", icon: Quote },
@@ -494,6 +527,7 @@ function AdminApp({ profile }) {
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "detalles" && <DetallesAdmin {...shared} onConvertido={data.reload} />}
+          {tab === "prioridades" && <SeguimientoPrioridades activities={data.activities} companies={data.companies} users={data.users} profile={profile} reload={data.reload} onOpen={openActivity} />}
           {tab === "companies" && <Companies {...shared} onOpenActivity={openActivity} />}
           {tab === "team" && <Team {...shared} onOpenActivity={openActivity} />}
           {tab === "frases" && <Frases />}
@@ -644,12 +678,23 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
 // ============ ADMIN: ACTIVIDADES ============
 function AdminActivities({ activities, setOpenActId, openActId, companies, users, profile, reload }) {
   const [creating, setCreating] = useState(false);
+  const [filtro, setFiltro] = useState("proceso"); // proceso | terminadas | todas
 
   if (openActId) {
     const act = activities.find((a) => a.id === openActId);
     if (act) return <ActivityDetail activity={act} companies={companies} users={users} profile={profile} reload={reload} isAdmin onBack={() => setOpenActId(null)} />;
   }
   const members = users.filter((u) => u.rol === "member");
+
+  const enProceso = activities.filter((a) => a.progress < 100);
+  const terminadas = activities.filter((a) => a.progress >= 100);
+  const base = filtro === "proceso" ? enProceso : filtro === "terminadas" ? terminadas : activities;
+  // Prioridades activas primero
+  const visibles = [...base].sort((x, y) => {
+    const px = x.altaPrioridad && !x.prioridadTerminada ? 1 : 0;
+    const py = y.altaPrioridad && !y.prioridadTerminada ? 1 : 0;
+    return py - px;
+  });
 
   return (
     <div>
@@ -658,15 +703,23 @@ function AdminActivities({ activities, setOpenActId, openActId, companies, users
       {(!members.length || !companies.length) && (
         <div style={S.alertStrip}><AlertCircle size={16} /><span>Para crear actividades primero registra al menos una <b>empresa</b> y un <b>integrante</b>.</span></div>
       )}
+      <div style={S.chipRow}>
+        <button style={filtro === "proceso" ? S.chipActive : S.chip} onClick={() => setFiltro("proceso")}>En proceso ({enProceso.length})</button>
+        <button style={filtro === "terminadas" ? S.chipActive : S.chip} onClick={() => setFiltro("terminadas")}>Terminadas ({terminadas.length})</button>
+        <button style={filtro === "todas" ? S.chipActive : S.chip} onClick={() => setFiltro("todas")}>Todas ({activities.length})</button>
+      </div>
       <div style={S.cardGrid} className="cardgrid">
-        {activities.length === 0 && <Empty text="Sin actividades. Crea la primera para empezar." />}
-        {activities.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => setOpenActId(a.id)} />)}
+        {visibles.length === 0 && <Empty text="No hay actividades en este estado." />}
+        {visibles.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => setOpenActId(a.id)} />)}
       </div>
       {creating && (
         <ActivityForm companies={companies} members={members} onClose={() => setCreating(false)}
           onSave={async (data) => {
             const row = await Api.createActivity(data, profile.id);
-            if (row) await Api.pushNotif(data.assignedTo, `Nueva actividad asignada: "${data.title}"`, row.id, "assign");
+            if (row) {
+              if (data.altaPrioridad) await Api.pushNotif(data.assignedTo, `🔴 ALTA PRIORIDAD: "${data.title}" — atiéndela cuanto antes`, row.id, "prioridad");
+              else await Api.pushNotif(data.assignedTo, `Nueva actividad asignada: "${data.title}"`, row.id, "assign");
+            }
             setCreating(false); reload();
           }} />
       )}
@@ -679,12 +732,25 @@ function ActivityCard({ a, companies, users, onClick }) {
   const who = users.find((u) => u.id === a.assignedTo);
   const status = a.progress >= 100 ? "done" : a.progress > 0 ? "progress" : "pending";
   const vencida = estaVencida(a.fechaProgramada, a.progress);
+  const prioridadActiva = a.altaPrioridad && !a.prioridadTerminada;
+  const cardStyle = {
+    ...S.actCard,
+    ...(vencida ? { borderColor: "rgba(220,80,80,.5)" } : {}),
+    ...(prioridadActiva ? { borderColor: "#ef4444", borderWidth: 2, background: "rgba(239,68,68,.06)" } : {}),
+  };
   return (
-    <div style={{ ...S.actCard, ...(vencida ? { borderColor: "rgba(220,80,80,.5)" } : {}) }} onClick={onClick}>
+    <div style={cardStyle} onClick={onClick}>
+      {prioridadActiva && (
+        <div style={S.prioridadBanner}>
+          <AlertCircle size={13} /> ALTA PRIORIDAD
+          {a.enterado && <span style={{ marginLeft: "auto", color: "var(--green)", display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={12} /> Enterado</span>}
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <StatusPill status={status} />
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {a.periodicidad && <span style={S.recurTag}><Clock size={11} /> {periodoLabel(a.periodicidad)}</span>}
+          {a.vbTerminacion && <span style={S.okTag}><Check size={11} /> V°B° terminación</span>}
           {a.approvalRequested && <span style={S.approvalTag}><ThumbsUp size={11} /> V°B° pendiente</span>}
         </div>
       </div>
@@ -720,6 +786,7 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
   const [assignedTo, setAssignedTo] = useState(initial?.assignedTo || members[0]?.id || "");
   const [photos, setPhotos] = useState(initial?.photos || []);
   const [periodicidad, setPeriodicidad] = useState(initial?.periodicidad || "");
+  const [altaPrioridad, setAltaPrioridad] = useState(initial?.altaPrioridad || false);
   const [fechaProgramada, setFechaProgramada] = useState(initial?.fechaProgramada || "");
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -783,10 +850,23 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
         </p>
       )}
 
+      <div style={{ borderTop: "1px solid var(--line)", margin: "16px 0 12px" }} />
+      <label style={{ ...S.vbCheck, cursor: "pointer" }} onClick={() => setAltaPrioridad((v) => !v)}>
+        <input type="checkbox" checked={altaPrioridad} onChange={(e) => setAltaPrioridad(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#ef4444" }} />
+        <span style={{ color: altaPrioridad ? "#f87171" : "var(--text)", fontWeight: 700 }}>
+          <AlertCircle size={14} style={{ verticalAlign: "middle", marginRight: 4 }} /> Marcar como ALTA PRIORIDAD
+        </span>
+      </label>
+      {altaPrioridad && (
+        <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+          Aparecerá resaltada y hasta arriba en la lista del especialista, con notificación destacada. Deberá confirmar que la vio con "Enterado".
+        </p>
+      )}
+
       <div style={S.modalActions}>
         <button style={S.btnGhost} onClick={onClose}>Cancelar</button>
         <button style={S.btnPrimary} disabled={!title.trim() || !companyId || !assignedTo || saving || busy}
-          onClick={async () => { setSaving(true); await onSave({ title: title.trim(), description: description.trim(), companyId, assignedTo, photos, periodicidad, fechaProgramada }); }}>
+          onClick={async () => { setSaving(true); await onSave({ title: title.trim(), description: description.trim(), companyId, assignedTo, photos, periodicidad, fechaProgramada, altaPrioridad }); }}>
           {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : "Crear y asignar"}
         </button>
       </div>
@@ -944,6 +1024,62 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
         </div>
         <div style={S.bigProgress}><ProgressRing value={a.progress} /></div>
       </div>
+
+      {/* Panel de ALTA PRIORIDAD */}
+      {a.altaPrioridad && (
+        <div style={{ ...S.panel, borderColor: a.prioridadTerminada ? "var(--line)" : "#ef4444", borderWidth: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: a.prioridadTerminada ? "var(--green)" : "#f87171", fontWeight: 700 }}>
+            {a.prioridadTerminada ? <Check size={18} /> : <AlertCircle size={18} />}
+            {a.prioridadTerminada ? "Prioridad con terminación satisfactoria" : "ACTIVIDAD DE ALTA PRIORIDAD"}
+          </div>
+          {/* Especialista asignado: botón Enterado */}
+          {!isAdmin && a.assignedTo === profile.id && !a.enterado && (
+            <>
+              <p style={{ fontSize: 13, color: "var(--muted)", margin: "10px 0" }}>Confirma que viste esta prioridad para que el administrador y el supervisor lo sepan.</p>
+              <button style={{ ...S.btnPrimary, background: "#ef4444", color: "#fff" }} onClick={async () => {
+                await Api.marcarEnterado(a.id);
+                const admins = users.filter((u) => esAdmin(u) || esSupervisor(u));
+                for (const ad of admins) await Api.pushNotif(ad.id, `${profile.nombre} se dio por enterado de la prioridad "${a.title}".`, a.id, "info");
+                reload();
+              }}><Check size={16} /> Enterado</button>
+            </>
+          )}
+          {a.enterado && (
+            <div style={{ fontSize: 13, color: "var(--green)", marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <Check size={14} /> Enterado {a.enteradoEn ? `· ${fmtDate(a.enteradoEn)}` : ""}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* V°B° de terminación (solo Admin) */}
+      {isAdmin && a.progress >= 100 && (
+        <div style={{ ...S.panel, borderColor: a.vbTerminacion ? "var(--green)" : "var(--amber)" }}>
+          {a.vbTerminacion ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--green)", fontWeight: 700 }}>
+              <Check size={18} /> Visto bueno de terminación otorgado {a.vbTerminacionEn ? `· ${fmtDate(a.vbTerminacionEn)}` : ""}
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700 }}><ThumbsUp size={16} /> Confirmar terminación</div>
+              <p style={{ fontSize: 13, color: "var(--muted)", margin: "8px 0 12px" }}>Esta actividad está al 100%. Da el visto bueno de terminación para confirmarle al responsable que concluyó satisfactoriamente.</p>
+              <button style={{ ...S.btnPrimary, background: "var(--green)" }} onClick={async () => {
+                await Api.vistoBuenoTerminacion(a.id);
+                await Api.pushNotif(a.assignedTo, `✅ El administrador dio el visto bueno: "${a.title}" concluyó satisfactoriamente.`, a.id, "done");
+                reload();
+              }}><Check size={16} /> Dar visto bueno de terminación</button>
+            </>
+          )}
+        </div>
+      )}
+      {/* Aviso al responsable de que su actividad recibió V°B° */}
+      {!isAdmin && a.assignedTo === profile.id && a.vbTerminacion && (
+        <div style={{ ...S.panel, borderColor: "var(--green)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--green)", fontWeight: 700 }}>
+            <Check size={18} /> El administrador confirmó que esta actividad concluyó satisfactoriamente.
+          </div>
+        </div>
+      )}
 
       {a.description && <div style={S.panel}><h3 style={S.panelTitle}><FileText size={14} /> Descripción</h3><p style={S.descText}>{a.description}</p></div>}
       {a.photos?.length > 0 && (
@@ -1289,6 +1425,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPass, setEditPass] = useState("");
+  const [editClasif, setEditClasif] = useState("especialista");
   const [editErr, setEditErr] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
@@ -1312,6 +1449,10 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
         headers: { Authorization: `Bearer ${session?.access_token}` },
       });
       if (error || data?.error) { setEditErr(data?.error || "No se pudo actualizar."); setEditBusy(false); return; }
+      // Guardar la clasificación (supervisor/especialista) si no es admin
+      if (editUser.rol !== "admin") {
+        await Api.updateUser(editUser.id, { clasificacion: editClasif });
+      }
       setEditUser(null); setEditEmail(""); setEditPass(""); reload();
     } catch (e) {
       setEditErr("Error de conexión con el servidor.");
@@ -1365,7 +1506,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
                 <h4 style={S.entityName}>{m.nombre}</h4>
                 <div style={S.entityTag}>{assigned.length} asignadas · {doneN} completadas · ver historial</div>
               </div>
-              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); setEditEmail(""); setEditPass(""); setEditErr(""); }} title="Editar integrante"><Pencil size={14} /></button>
+              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); setEditEmail(""); setEditPass(""); setEditClasif(m.clasificacion || "especialista"); setEditErr(""); }} title="Editar integrante"><Pencil size={14} /></button>
             </div>
           );
         })}
@@ -1401,6 +1542,20 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
             Escribe el correo para asignárselo o corregirlo. La contraseña solo cambia si escribes una nueva (mínimo 6 caracteres); si la dejas vacía, se conserva la actual.
           </p>
           {editErr && <div style={S.errBox}><AlertCircle size={14} /> {editErr}</div>}
+
+          {editUser.rol !== "admin" && (
+            <>
+              <div style={{ borderTop: "1px solid var(--line)", margin: "16px 0 12px" }} />
+              <label style={S.label}>Clasificación</label>
+              <select style={S.select} value={editClasif} onChange={(e) => setEditClasif(e.target.value)}>
+                <option value="especialista">Especialista</option>
+                <option value="supervisor">Supervisor</option>
+              </select>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+                El <b>Supervisor</b> puede crear y asignar actividades a los especialistas, marcar alta prioridad y dar seguimiento. El <b>Especialista</b> ejecuta las actividades que se le asignan.
+              </p>
+            </>
+          )}
 
           <div style={{ borderTop: "1px solid var(--line)", margin: "16px 0 12px" }} />
           <label style={S.label}>Rol</label>
@@ -1578,11 +1733,110 @@ function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
   );
 }
 
+// ============ SEGUIMIENTO DE PRIORIDADES (Admin y Supervisor) ============
+function SeguimientoPrioridades({ activities, companies, users, profile, reload, onOpen }) {
+  const [filtro, setFiltro] = useState("activas");
+  const prioridades = activities.filter((a) => a.altaPrioridad);
+  const activas = prioridades.filter((a) => !a.prioridadTerminada);
+  const terminadas = prioridades.filter((a) => a.prioridadTerminada);
+  const visibles = filtro === "activas" ? activas : filtro === "terminadas" ? terminadas : prioridades;
+
+  return (
+    <div>
+      <PageHead title="Seguimiento de prioridades" sub="Actividades de alta prioridad del equipo" />
+      <div style={S.chipRow}>
+        <button style={filtro === "activas" ? S.chipActive : S.chip} onClick={() => setFiltro("activas")}>Activas ({activas.length})</button>
+        <button style={filtro === "terminadas" ? S.chipActive : S.chip} onClick={() => setFiltro("terminadas")}>Terminadas ({terminadas.length})</button>
+        <button style={filtro === "todas" ? S.chipActive : S.chip} onClick={() => setFiltro("todas")}>Todas ({prioridades.length})</button>
+      </div>
+      <div style={S.cardGrid} className="cardgrid">
+        {visibles.length === 0 && <Empty text="No hay prioridades en este estado." />}
+        {visibles.map((a) => (
+          <PrioridadCard key={a.id} a={a} companies={companies} users={users} profile={profile} reload={reload} onOpen={onOpen} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Tarjeta de una prioridad con observaciones y acciones de seguimiento
+function PrioridadCard({ a, companies, users, profile, reload, onOpen }) {
+  const [obs, setObs] = useState([]);
+  const [nuevaObs, setNuevaObs] = useState("");
+  const [abierto, setAbierto] = useState(false);
+  const who = users.find((u) => u.id === a.assignedTo);
+  const emp = companies.find((c) => c.id === a.companyId);
+
+  const cargarObs = async () => setObs(await Api.getObservaciones(a.id));
+  useEffect(() => { if (abierto) cargarObs(); }, [abierto]);
+
+  const enviarObs = async () => {
+    if (!nuevaObs.trim()) return;
+    await Api.addObservacion(a.id, profile.id, nuevaObs.trim());
+    setNuevaObs(""); cargarObs();
+  };
+  const terminar = async () => {
+    if (!confirm(`¿Marcar "Terminación satisfactoria" de esta prioridad?`)) return;
+    await Api.terminarPrioridad(a.id);
+    await Api.pushNotif(a.assignedTo, `Tu prioridad "${a.title}" fue marcada como terminación satisfactoria.`, a.id, "done");
+    reload();
+  };
+
+  return (
+    <div style={{ ...S.actCard, borderColor: a.prioridadTerminada ? "var(--line)" : "#ef4444" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ ...S.prioridadBanner, margin: 0, border: "none", padding: 0, background: "none" }}><AlertCircle size={13} /> ALTA PRIORIDAD</span>
+        {a.prioridadTerminada
+          ? <span style={S.okTag}><Check size={11} /> Terminación satisfactoria</span>
+          : a.enterado
+            ? <span style={{ ...S.okTag, color: "var(--green)" }}><Check size={11} /> Enterado</span>
+            : <span style={S.pendTag}><Clock size={11} /> Sin leer</span>}
+      </div>
+      <h4 style={S.actCardTitle} onClick={() => onOpen(a.id)} >{a.title}</h4>
+      <div style={S.actCardMeta}>
+        <span><Building2 size={12} /> {emp?.nombre || "—"}</span>
+        <span><User size={12} /> {who?.nombre || "—"}</span>
+        <span>{a.progress}%</span>
+      </div>
+
+      <button style={{ ...S.btnGhost, width: "100%", justifyContent: "center", marginTop: 10 }} onClick={() => setAbierto((v) => !v)}>
+        <FileText size={14} /> Observaciones {obs.length > 0 && `(${obs.length})`}
+      </button>
+
+      {abierto && (
+        <div style={{ marginTop: 10 }}>
+          {obs.map((o) => {
+            const autor = users.find((u) => u.id === o.autor_id);
+            return (
+              <div key={o.id} style={S.obsItem}>
+                <div style={S.obsHead}><b>{autor?.nombre || "—"}</b> · {fmtDate(o.creado)}</div>
+                <div>{o.texto}</div>
+              </div>
+            );
+          })}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }} className="formrow">
+            <input style={S.input} value={nuevaObs} onChange={(e) => setNuevaObs(e.target.value)} placeholder="Escribe una observación…" onKeyDown={(e) => e.key === "Enter" && enviarObs()} />
+            <button style={{ ...S.btnPrimary, width: "auto", whiteSpace: "nowrap" }} onClick={enviarObs} disabled={!nuevaObs.trim()}>Enviar</button>
+          </div>
+        </div>
+      )}
+
+      {!a.prioridadTerminada && (
+        <button style={{ ...S.btnPrimary, width: "100%", justifyContent: "center", marginTop: 10, background: "var(--green)" }} onClick={terminar}>
+          <Check size={15} /> Terminación satisfactoria
+        </button>
+      )}
+    </div>
+  );
+}
+
 function MemberApp({ profile }) {
   const data = useData(profile);
   const [openActId, setOpenActId] = useState(null);
-  const [vista, setVista] = useState("actividades"); // actividades | detalle
+  const [vista, setVista] = useState("actividades");
+  const [creando, setCreando] = useState(false);
   const logout = () => supabase.auth.signOut();
+  const supervisor = esSupervisor(profile);
   const mine = data.activities.filter((a) => a.assignedTo === profile.id);
   const shared = { ...data, profile, onLogout: logout };
 
@@ -1599,12 +1853,25 @@ function MemberApp({ profile }) {
     );
   }
 
-  const pending = mine.filter((a) => a.progress < 100);
-  const done = mine.filter((a) => a.progress >= 100);
+  // Separar: en proceso (sin terminar) vs terminadas
+  const enProceso = mine.filter((a) => a.progress < 100);
+  const terminadas = mine.filter((a) => a.progress >= 100);
+  // Prioridades activas primero, luego el resto
+  const ordenadas = [...enProceso].sort((x, y) => {
+    const px = x.altaPrioridad && !x.prioridadTerminada ? 1 : 0;
+    const py = y.altaPrioridad && !y.prioridadTerminada ? 1 : 0;
+    return py - px;
+  });
+
   const navItems = [
-    { id: "actividades", label: "Mis actividades", icon: ClipboardList },
-    { id: "detalle", label: "Reportar detalle", icon: AlertCircle },
+    { id: "actividades", label: "En proceso", icon: ClipboardList },
+    { id: "terminadas", label: "Terminadas", icon: CheckCircle2 },
+    { id: "detalle", label: "Detalle", icon: AlertCircle },
   ];
+  if (supervisor) navItems.push({ id: "prioridades", label: "Prioridades", icon: Shield });
+
+  const especialistas = data.users.filter((u) => esEspecialista(u));
+
   return (
     <>
       <TopBar {...shared} onOpenActivity={setOpenActId} />
@@ -1612,23 +1879,36 @@ function MemberApp({ profile }) {
         <main style={{ ...S.main, marginLeft: 0, paddingBottom: 90 }} className="main">
           {vista === "actividades" && (
             <>
-              <PageHead title={`Hola, ${profile.nombre.split(" ")[0]}`} sub="Tus actividades asignadas" />
+              <PageHead title={`Hola, ${profile.nombre.split(" ")[0]}`}
+                sub={supervisor ? "Supervisor · tus actividades en proceso" : "Tus actividades en proceso"}
+                action={supervisor ? <button style={S.btnPrimary} onClick={() => setCreando(true)}><Plus size={16} /> Nueva actividad</button> : null} />
               <div style={S.kpiGrid} className="kpigrid">
-                <KpiCard icon={ClipboardList} label="Asignadas" value={mine.length} tone="accent" />
-                <KpiCard icon={Clock} label="Por completar" value={pending.length} tone="amber" />
-                <KpiCard icon={CheckCircle2} label="Completadas" value={done.length} tone="green" />
+                <KpiCard icon={ClipboardList} label="En proceso" value={enProceso.length} tone="amber" />
+                <KpiCard icon={CheckCircle2} label="Terminadas" value={terminadas.length} tone="green" />
+                <KpiCard icon={AlertCircle} label="Prioridades" value={enProceso.filter((a) => a.altaPrioridad && !a.prioridadTerminada).length} tone="muted" />
               </div>
               <div style={S.cardGrid} className="cardgrid">
-                {mine.length === 0 && <Empty text="No tienes actividades asignadas todavía." />}
-                {mine.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
+                {ordenadas.length === 0 && <Empty text="No tienes actividades en proceso." />}
+                {ordenadas.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
+              </div>
+            </>
+          )}
+          {vista === "terminadas" && (
+            <>
+              <PageHead title="Actividades terminadas" sub="Tu historial de actividades concluidas" />
+              <div style={S.cardGrid} className="cardgrid">
+                {terminadas.length === 0 && <Empty text="Aún no tienes actividades terminadas." />}
+                {terminadas.map((a) => <ActivityCard key={a.id} a={a} companies={data.companies} users={data.users} onClick={() => setOpenActId(a.id)} />)}
               </div>
             </>
           )}
           {vista === "detalle" && <ReportarDetalle companies={data.companies} profile={profile} reload={data.reload} />}
+          {vista === "prioridades" && supervisor && (
+            <SeguimientoPrioridades activities={data.activities} companies={data.companies} users={data.users} profile={profile} reload={data.reload} onOpen={setOpenActId} />
+          )}
           <Footer />
         </main>
       </div>
-      {/* Barra de navegación inferior */}
       <nav style={S.bottomNav}>
         {navItems.map((n) => (
           <button key={n.id} style={vista === n.id ? S.bottomNavItemActive : S.bottomNavItem} onClick={() => setVista(n.id)}>
@@ -1637,6 +1917,18 @@ function MemberApp({ profile }) {
           </button>
         ))}
       </nav>
+      {creando && supervisor && (
+        <ActivityForm companies={data.companies} members={especialistas}
+          onClose={() => setCreando(false)}
+          onSave={async (d) => {
+            const row = await Api.createActivity(d, profile.id);
+            if (row) {
+              if (d.altaPrioridad) await Api.pushNotif(d.assignedTo, `🔴 ALTA PRIORIDAD: "${d.title}" — atiéndela cuanto antes`, row.id, "prioridad");
+              else await Api.pushNotif(d.assignedTo, `Nueva actividad asignada: "${d.title}"`, row.id, "assign");
+            }
+            setCreando(false); data.reload();
+          }} />
+      )}
     </>
   );
 }
@@ -1853,6 +2145,10 @@ const S = {
   pill: { fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, border: "1px solid", letterSpacing: .3 },
   approvalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
   recurTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#60a5fa", background: "rgba(96,165,250,.12)", padding: "3px 9px", borderRadius: 20 },
+  prioridadBanner: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#f87171", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "6px 10px", borderRadius: 8, marginBottom: 10, letterSpacing: 0.3 },
+  pendTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#f87171", background: "rgba(239,68,68,.12)", padding: "3px 9px", borderRadius: 20 },
+  obsItem: { background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, fontSize: 13, lineHeight: 1.5 },
+  obsHead: { fontSize: 11.5, color: "var(--muted)", marginBottom: 3 },
   fechaProg: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#60a5fa", marginTop: 10, background: "rgba(96,165,250,.12)", border: "1px solid rgba(96,165,250,.3)", padding: "7px 12px", borderRadius: 10, alignSelf: "flex-start" },
   fechaVencida: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "#f87171", marginTop: 8, background: "rgba(220,80,80,.1)", padding: "5px 10px", borderRadius: 8, alignSelf: "flex-start" },
   okTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--green)", background: "rgba(34,197,94,.12)", padding: "3px 9px", borderRadius: 20 },
