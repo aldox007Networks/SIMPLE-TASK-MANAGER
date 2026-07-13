@@ -13,22 +13,25 @@ self.addEventListener("push", (event) => {
     if (event.data) data.body = event.data.text();
   }
   const title = data.title || "iTask";
+  const cuerpo = data.body || "";
+  // Detectar si es una prioridad (el texto viene con 🔴 o "ALTA PRIORIDAD")
+  const esPrioridad = cuerpo.includes("🔴") || cuerpo.includes("ALTA PRIORIDAD");
+
   const options = {
-    body: data.body || "",
+    body: cuerpo,
     icon: "/icono-192.png",
     badge: "/icono-192.png",
-    vibrate: [100, 50, 100],
-    // tag único por mensaje: evita que se "peguen" o se pierdan entre sí
+    // Prioridad: vibración más larga e insistente
+    vibrate: esPrioridad ? [200, 100, 200, 100, 200, 100, 200] : [100, 50, 100],
     tag: "itask-" + Date.now(),
     renotify: true,
-    requireInteraction: false,
+    // Prioridad: la notificación se queda en pantalla hasta que la tocan
+    requireInteraction: esPrioridad,
     data: { url: "/" },
   };
-  // waitUntil mantiene vivo el SW hasta que la notificación se muestra
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// Al tocar la notificación, abre o enfoca la app
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(
