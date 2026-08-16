@@ -64,6 +64,53 @@ const esSupervisor = (perfil) => perfil?.rol === "member" && perfil?.clasificaci
 const esEspecialista = (perfil) => perfil?.rol === "member" && perfil?.clasificacion !== "supervisor";
 // ¿Puede gestionar prioridades y dar seguimiento? (admin o supervisor)
 const puedeSupervisar = (perfil) => esAdmin(perfil) || esSupervisor(perfil);
+
+// Mensajes de agradecimiento festivos para el V°B° de terminación
+const MENSAJES_GRACIAS = [
+  "🎉 ¡Excelente trabajo! Gracias por tu esfuerzo y dedicación.",
+  "👏 ¡Felicidades! Tu trabajo hace la diferencia. ¡Bien hecho!",
+  "🌟 ¡Gran labor! Agradecemos tu compromiso y empeño.",
+  "🥳 ¡Tarea completada con éxito! Gracias por dar lo mejor de ti.",
+  "💪 ¡Lo lograste! Tu esfuerzo es muy valorado por el equipo.",
+  "🙌 ¡Trabajo impecable! Gracias por tu profesionalismo.",
+  "✨ ¡Felicidades por concluir! Tu dedicación se nota.",
+  "🏆 ¡Misión cumplida! Gracias por tu excelente desempeño.",
+  "😊 ¡Muy bien hecho! Agradecemos tu entrega y compromiso.",
+  "🎊 ¡Enhorabuena! Gracias por tu valioso trabajo.",
+];
+const mensajeGracias = () => MENSAJES_GRACIAS[Math.floor(Math.random() * MENSAJES_GRACIAS.length)];
+
+// Duración en horas entre dos fechas (o null si falta alguna)
+function horasEntre(inicio, fin) {
+  if (!inicio || !fin) return null;
+  const ms = new Date(fin) - new Date(inicio);
+  if (ms < 0 || isNaN(ms)) return null;
+  return ms / 3600000; // horas
+}
+// Formatea horas a texto legible (ej. "2 d 5 h", "3 h 20 min", "45 min")
+function fmtDuracion(horas) {
+  if (horas == null) return "—";
+  const totalMin = Math.round(horas * 60);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d} d ${h} h`;
+  if (h > 0) return `${h} h ${m} min`;
+  return `${m} min`;
+}
+// Métricas de una lista de actividades terminadas
+function calcularMetricas(acts) {
+  const terminadas = acts.filter((a) => a.progress >= 100 && a.completedAt);
+  const tiemposTotal = terminadas.map((a) => horasEntre(a.createdAt, a.completedAt)).filter((x) => x != null);
+  const tiemposEjec = terminadas.map((a) => horasEntre(a.startedAt || a.createdAt, a.completedAt)).filter((x) => x != null);
+  const prom = (arr) => arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null;
+  return {
+    completadas: terminadas.length,
+    promTotal: prom(tiemposTotal),
+    promEjec: prom(tiemposEjec),
+    terminadas,
+  };
+}
 const photoDesc = (p) => (typeof p === "string" ? "" : p?.descripcion || "");
 
 // Periodicidades disponibles y cuánto suman
@@ -222,6 +269,7 @@ function normalizeActivity(a) {
     altaPrioridad: a.alta_prioridad, enterado: a.enterado, enteradoEn: a.enterado_en,
     prioridadTerminada: a.prioridad_terminada, prioridadTerminadaEn: a.prioridad_terminada_en,
     vbTerminacion: a.vb_terminacion, vbTerminacionEn: a.vb_terminacion_en,
+    mensajeGracias: a.mensaje_gracias,
     updates: (a.avances || []).map((u) => ({
       id: u.id, by: u.autor_id, text: u.texto, photos: u.fotos || [], pct: u.progreso, ts: u.creado,
       solicitaVB: u.solicita_vb, motivoVB: u.motivo_vb,
@@ -263,8 +311,8 @@ const Api = {
     await supabase.from("actividades").update({ prioridad_terminada: true, prioridad_terminada_en: new Date().toISOString() }).eq("id", activityId);
   },
   // Admin da el visto bueno final de terminación
-  async vistoBuenoTerminacion(activityId) {
-    await supabase.from("actividades").update({ vb_terminacion: true, vb_terminacion_en: new Date().toISOString() }).eq("id", activityId);
+  async vistoBuenoTerminacion(activityId, mensaje) {
+    await supabase.from("actividades").update({ vb_terminacion: true, vb_terminacion_en: new Date().toISOString(), mensaje_gracias: mensaje || null }).eq("id", activityId);
   },
   // Observaciones (para prioridades)
   async addObservacion(activityId, autorId, texto) {
@@ -272,6 +320,14 @@ const Api = {
   },
   async getObservaciones(activityId) {
     const { data } = await supabase.from("observaciones").select("*").eq("actividad_id", activityId).order("creado", { ascending: true });
+    return data || [];
+  },
+  // Conversación sobre la solicitud de visto bueno
+  async addVbMensaje(activityId, autorId, texto) {
+    await supabase.from("vb_mensajes").insert({ actividad_id: activityId, autor_id: autorId, texto });
+  },
+  async getVbMensajes(activityId) {
+    const { data } = await supabase.from("vb_mensajes").select("*").eq("actividad_id", activityId).order("creado", { ascending: true });
     return data || [];
   },
   async delActivity(id) {
@@ -348,6 +404,11 @@ const Api = {
   async getFrases() { const { data } = await supabase.from("frases").select("*"); return data || []; },
   async markNotifsRead(userId) { await supabase.from("notificaciones").update({ leida: true }).eq("destinatario", userId).eq("leida", false); },
   async markNotifRead(id) { await supabase.from("notificaciones").update({ leida: true }).eq("id", id); },
+  // Marca como atendidas las notificaciones de una actividad para un usuario (al resolver la acción)
+  async markNotifsActividad(userId, activityId) {
+    if (!activityId) return;
+    await supabase.from("notificaciones").update({ leida: true }).eq("destinatario", userId).eq("actividad_id", activityId).eq("leida", false);
+  },
 };
 
 // ============ SHELL ============
@@ -448,13 +509,13 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
           {open && (
             <div style={S.notifPanel}>
               <div style={S.notifHead}>
-                <span>Notificaciones</span>
-                {unread > 0 && <button style={S.linkBtn} onClick={async () => { await Api.markNotifsRead(profile.id); reload(); }}>Marcar leídas</button>}
+                <span>Pendientes {unread > 0 && `(${unread})`}</span>
+                {unread > 0 && <button style={S.linkBtn} onClick={async () => { await Api.markNotifsRead(profile.id); reload(); }}>Marcar todas leídas</button>}
               </div>
               <div style={{ maxHeight: 360, overflowY: "auto" }}>
-                {notifs.length === 0 && <div style={S.notifEmpty}>Sin notificaciones todavía.</div>}
-                {notifs.map((n) => (
-                  <div key={n.id} style={{ ...S.notifItem, opacity: n.leida ? 0.55 : 1 }}
+                {notifs.filter((n) => !n.leida).length === 0 && <div style={S.notifEmpty}>No tienes notificaciones pendientes. 🎉</div>}
+                {notifs.filter((n) => !n.leida).map((n) => (
+                  <div key={n.id} style={S.notifItem}
                     onClick={async () => {
                       await Api.markNotifRead(n.id);
                       const act = activities.find((a) => a.id === n.actividad_id);
@@ -466,6 +527,10 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
                       <div style={S.notifText}>{n.texto}</div>
                       <div style={S.notifTime}>{fmtDate(n.creado)}</div>
                     </div>
+                    <button style={S.notifCheck} title="Marcar como atendida"
+                      onClick={async (e) => { e.stopPropagation(); await Api.markNotifRead(n.id); reload(); }}>
+                      <Check size={14} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -500,6 +565,7 @@ function AdminApp({ profile }) {
     { id: "activities", label: "Actividades", icon: ClipboardList },
     { id: "detalles", label: "Detalles", icon: AlertCircle },
     { id: "prioridades", label: "Prioridades", icon: Shield },
+    { id: "rendimiento", label: "Rendimiento", icon: TrendingUp },
     { id: "companies", label: "Empresas", icon: Building2 },
     { id: "team", label: "Equipo", icon: Users },
     { id: "frases", label: "Frases", icon: Quote },
@@ -528,6 +594,7 @@ function AdminApp({ profile }) {
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "detalles" && <DetallesAdmin {...shared} onConvertido={data.reload} />}
           {tab === "prioridades" && <SeguimientoPrioridades activities={data.activities} companies={data.companies} users={data.users} profile={profile} reload={data.reload} onOpen={openActivity} />}
+          {tab === "rendimiento" && <Rendimiento activities={data.activities} users={data.users} />}
           {tab === "companies" && <Companies {...shared} onOpenActivity={openActivity} />}
           {tab === "team" && <Team {...shared} onOpenActivity={openActivity} />}
           {tab === "frases" && <Frases />}
@@ -977,6 +1044,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
 
   const giveApproval = async () => {
     await Api.approve(a.id);
+    await Api.markNotifsActividad(profile.id, a.id); // limpia la notif de solicitud
     await Api.pushNotif(a.assignedTo, `El administrador dio el visto bueno en "${a.title}". Puedes continuar.`, a.id, "done");
     reload();
   };
@@ -989,6 +1057,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   };
   const doReject = async () => {
     await Api.reject(a.id, motivoRej.trim(), fotosRej);
+    await Api.markNotifsActividad(profile.id, a.id); // limpia la notif de solicitud
     await Api.pushNotif(a.assignedTo, `El administrador NO aprobó "${a.title}". Revisa la explicación.`, a.id, "approval");
     setShowReject(false); setMotivoRej(""); setFotosRej([]); reload();
   };
@@ -1064,8 +1133,9 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700 }}><ThumbsUp size={16} /> Confirmar terminación</div>
               <p style={{ fontSize: 13, color: "var(--muted)", margin: "8px 0 12px" }}>Esta actividad está al 100%. Da el visto bueno de terminación para confirmarle al responsable que concluyó satisfactoriamente.</p>
               <button style={{ ...S.btnPrimary, background: "var(--green)" }} onClick={async () => {
-                await Api.vistoBuenoTerminacion(a.id);
-                await Api.pushNotif(a.assignedTo, `✅ El administrador dio el visto bueno: "${a.title}" concluyó satisfactoriamente.`, a.id, "done");
+                const gracias = mensajeGracias();
+                await Api.vistoBuenoTerminacion(a.id, gracias);
+                await Api.pushNotif(a.assignedTo, `${gracias} — "${a.title}" concluyó satisfactoriamente.`, a.id, "done");
                 reload();
               }}><Check size={16} /> Dar visto bueno de terminación</button>
             </>
@@ -1074,10 +1144,11 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
       )}
       {/* Aviso al responsable de que su actividad recibió V°B° */}
       {!isAdmin && a.assignedTo === profile.id && a.vbTerminacion && (
-        <div style={{ ...S.panel, borderColor: "var(--green)" }}>
+        <div style={{ ...S.panel, borderColor: "var(--green)", background: "rgba(34,197,94,.06)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--green)", fontWeight: 700 }}>
-            <Check size={18} /> El administrador confirmó que esta actividad concluyó satisfactoriamente.
+            <Check size={18} /> Actividad concluida satisfactoriamente
           </div>
+          {a.mensajeGracias && <p style={{ fontSize: 15, color: "var(--text)", margin: "12px 0 0", lineHeight: 1.5 }}>{a.mensajeGracias}</p>}
         </div>
       )}
 
@@ -1114,6 +1185,17 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
             <button style={S.btnGhost} onClick={() => setShowReject(true)}><ThumbsDown size={15} /> Negar</button>
             <button style={S.btnPrimary} onClick={giveApproval}><Check size={16} /> Dar visto bueno</button>
           </div>
+          <ConversacionVB activityId={a.id} profile={profile} users={users} otroId={a.assignedTo} />
+        </div>
+      )}
+
+      {/* El integrante ve la conversación de V°B° mientras esté pendiente o si hay mensajes */}
+      {!isAdmin && a.assignedTo === profile.id && a.approvalRequested && (
+        <div style={{ ...S.approvalPanel, flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ThumbsUp size={16} /> <span>Solicitud de visto bueno enviada. Aquí puedes conversar con el administrador.</span>
+          </div>
+          <ConversacionVB activityId={a.id} profile={profile} users={users} otroId={null} />
         </div>
       )}
 
@@ -1288,6 +1370,17 @@ function HistorialActividades({ titulo, subtitulo, acts, companies, users, onOpe
     <div>
       <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
       <PageHead title={titulo} sub={subtitulo} />
+      {(() => {
+        const m = calcularMetricas(acts);
+        if (m.completadas === 0) return null;
+        return (
+          <div style={S.kpiGrid} className="kpigrid">
+            <KpiCard icon={CheckCircle2} label="Completadas" value={m.completadas} tone="green" />
+            <KpiCard icon={Clock} label="Prom. total" value={fmtDuracion(m.promTotal)} tone="amber" />
+            <KpiCard icon={Timer} label="Prom. ejecución" value={fmtDuracion(m.promEjec)} tone="blue" />
+          </div>
+        );
+      })()}
       <div style={S.chipRow}>
         {chips.map((c) => (
           <button key={c.id} style={filtro === c.id ? S.chipActive : S.chip} onClick={() => setFiltro(c.id)}>{c.label}</button>
@@ -1830,6 +1923,71 @@ function PrioridadCard({ a, companies, users, profile, reload, onOpen }) {
   );
 }
 
+// ============ RENDIMIENTO (métricas para el admin) ============
+function Rendimiento({ activities, users }) {
+  const especialistas = users.filter((u) => u.rol === "member");
+  const global = calcularMetricas(activities);
+
+  // Por integrante
+  const porIntegrante = especialistas.map((u) => {
+    const suyas = activities.filter((a) => a.assignedTo === u.id);
+    return { user: u, m: calcularMetricas(suyas), asignadas: suyas.length };
+  }).sort((a, b) => b.m.completadas - a.m.completadas);
+
+  return (
+    <div>
+      <PageHead title="Rendimiento del equipo" sub="Tiempos de ejecución y promedios para medir desempeño" />
+
+      <div style={S.kpiGrid} className="kpigrid">
+        <KpiCard icon={CheckCircle2} label="Actividades completadas" value={global.completadas} tone="green" />
+        <KpiCard icon={Clock} label="Prom. total (asignación→fin)" value={fmtDuracion(global.promTotal)} tone="amber" />
+        <KpiCard icon={Timer} label="Prom. ejecución (inicio→fin)" value={fmtDuracion(global.promEjec)} tone="blue" />
+      </div>
+
+      <div style={S.panel}>
+        <h3 style={S.panelTitle}><Users size={14} /> Desempeño por integrante</h3>
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 14px" }}>
+          El tiempo <b>total</b> cuenta desde que se asigna la actividad hasta que se termina. El de <b>ejecución</b> cuenta desde que el integrante la inicia (primer avance) hasta que la termina.
+        </p>
+        {porIntegrante.length === 0 && <Empty mini text="Aún no hay integrantes con datos." />}
+        {porIntegrante.map(({ user, m, asignadas }) => (
+          <div key={user.id} style={S.rendRow}>
+            <div style={S.avatarSm}>{user.nombre.slice(0, 2).toUpperCase()}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{user.nombre}{esSupervisor(user) ? " · Supervisor" : ""}</div>
+              <div style={S.rendStats}>
+                <span><CheckCircle2 size={12} /> {m.completadas} de {asignadas} completadas</span>
+                <span><Clock size={12} /> Total: {fmtDuracion(m.promTotal)}</span>
+                <span><Timer size={12} /> Ejecución: {fmtDuracion(m.promEjec)}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={S.panel}>
+        <h3 style={S.panelTitle}><ClipboardList size={14} /> Tiempo por actividad terminada</h3>
+        {global.terminadas.length === 0 && <Empty mini text="Aún no hay actividades terminadas." />}
+        {global.terminadas.slice().sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt)).map((a) => {
+          const who = users.find((u) => u.id === a.assignedTo);
+          return (
+            <div key={a.id} style={S.rendActRow}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>{a.title}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>{who?.nombre || "—"}</div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontSize: 12, color: "var(--amber)" }}>Total: {fmtDuracion(horasEntre(a.createdAt, a.completedAt))}</div>
+                <div style={{ fontSize: 12, color: "#60a5fa" }}>Ejec: {fmtDuracion(horasEntre(a.startedAt || a.createdAt, a.completedAt))}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MemberApp({ profile }) {
   const data = useData(profile);
   const [openActId, setOpenActId] = useState(null);
@@ -1989,6 +2147,53 @@ function PasswordInput({ value, onChange, placeholder, onKeyDown }) {
   );
 }
 
+// Conversación (ida y vuelta) sobre una solicitud de visto bueno
+function ConversacionVB({ activityId, profile, users, otroId }) {
+  const [mensajes, setMensajes] = useState([]);
+  const [texto, setTexto] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const cargar = async () => setMensajes(await Api.getVbMensajes(activityId));
+  useEffect(() => { cargar(); }, [activityId]);
+
+  const enviar = async () => {
+    if (!texto.trim()) return;
+    setBusy(true);
+    await Api.addVbMensaje(activityId, profile.id, texto.trim());
+    // Avisar a la otra parte
+    if (otroId) await Api.pushNotif(otroId, `Nuevo comentario sobre el visto bueno (${profile.nombre})`, activityId, "approval");
+    else {
+      // El integrante responde: avisar a admins
+      const admins = users.filter((u) => u.rol === "admin");
+      for (const ad of admins) await Api.pushNotif(ad.id, `${profile.nombre} respondió sobre el visto bueno`, activityId, "approval");
+    }
+    setTexto(""); await cargar(); setBusy(false);
+  };
+
+  return (
+    <div style={{ background: "var(--bg)", borderRadius: 10, padding: 12 }}>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, fontWeight: 600 }}>Conversación</div>
+      {mensajes.length === 0 && <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>Sin mensajes aún. Escribe un comentario.</p>}
+      {mensajes.map((m) => {
+        const autor = users.find((u) => u.id === m.autor_id);
+        const mio = m.autor_id === profile.id;
+        return (
+          <div key={m.id} style={{ display: "flex", justifyContent: mio ? "flex-end" : "flex-start", marginBottom: 6 }}>
+            <div style={{ maxWidth: "85%", background: mio ? "var(--accent)" : "var(--surface)", color: mio ? "#1a1a1a" : "var(--text)", border: mio ? "none" : "1px solid var(--line)", borderRadius: 10, padding: "7px 11px", fontSize: 13, lineHeight: 1.4 }}>
+              <div style={{ fontSize: 10.5, opacity: 0.7, marginBottom: 2 }}>{autor?.nombre || "—"} · {fmtDate(m.creado)}</div>
+              {m.texto}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }} className="formrow">
+        <input style={S.input} value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Escribe un comentario…" onKeyDown={(e) => e.key === "Enter" && enviar()} />
+        <button style={{ ...S.btnPrimary, width: "auto", whiteSpace: "nowrap" }} onClick={enviar} disabled={busy || !texto.trim()}>Enviar</button>
+      </div>
+    </div>
+  );
+}
+
 function Modal({ title, children, onClose }) {
   return <div style={S.overlay} className="overlaymodal" onClick={onClose}><div style={S.modal} onClick={(e) => e.stopPropagation()}><div style={S.modalHead}><h3 style={S.modalTitle}>{title}</h3><button style={S.iconBtnSm} onClick={onClose}><X size={18} /></button></div><div style={S.modalBody}>{children}</div></div></div>;
 }
@@ -2100,7 +2305,8 @@ const S = {
   notifHead: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid var(--line)", fontSize: 13, fontWeight: 700 },
   notifEmpty: { padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 },
   pushActivar: { padding: "12px 14px", borderTop: "1px solid var(--line)", textAlign: "center" },
-  notifItem: { display: "flex", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--line)", cursor: "pointer" },
+  notifItem: { display: "flex", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--line)", cursor: "pointer", alignItems: "center" },
+  notifCheck: { flexShrink: 0, width: 28, height: 28, borderRadius: 7, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
   notifDot: { width: 8, height: 8, borderRadius: 4, marginTop: 5, flexShrink: 0 },
   notifText: { fontSize: 13, lineHeight: 1.4 },
   notifTime: { fontSize: 11, color: "var(--muted)", marginTop: 3 },
@@ -2149,6 +2355,10 @@ const S = {
   pendTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#f87171", background: "rgba(239,68,68,.12)", padding: "3px 9px", borderRadius: 20 },
   obsItem: { background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, fontSize: 13, lineHeight: 1.5 },
   obsHead: { fontSize: 11.5, color: "var(--muted)", marginBottom: 3 },
+  rendRow: { display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--line)" },
+  avatarSm: { width: 38, height: 38, borderRadius: 9, background: "linear-gradient(135deg,#f59e0b,#b45309)", color: "#1a1a1a", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, flexShrink: 0 },
+  rendStats: { display: "flex", flexWrap: "wrap", gap: 12, marginTop: 4, fontSize: 12, color: "var(--muted)" },
+  rendActRow: { display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--line)" },
   fechaProg: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#60a5fa", marginTop: 10, background: "rgba(96,165,250,.12)", border: "1px solid rgba(96,165,250,.3)", padding: "7px 12px", borderRadius: 10, alignSelf: "flex-start" },
   fechaVencida: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: "#f87171", marginTop: 8, background: "rgba(220,80,80,.1)", padding: "5px 10px", borderRadius: 8, alignSelf: "flex-start" },
   okTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--green)", background: "rgba(34,197,94,.12)", padding: "3px 9px", borderRadius: 20 },
