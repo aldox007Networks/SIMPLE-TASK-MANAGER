@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabase";
 import { registerPushSW, activarNotificaciones, permisoConcedido } from "./push";
+import { sonarAlarma, desbloquearAudio, alarmaHabilitada, setAlarmaHabilitada } from "./alarma";
 import {
   Bell, LayoutDashboard, ClipboardList, Building2, Users, LogOut,
   Plus, X, Camera, Check, AlertCircle, ChevronRight, Trash2,
@@ -151,12 +152,20 @@ export default function App() {
 
   useEffect(() => {
     registerPushSW();
+    // Desbloquear el audio de la alarma en la primera interacción del usuario
+    const desbloquear = () => { desbloquearAudio(); };
+    window.addEventListener("pointerdown", desbloquear, { once: true });
+    window.addEventListener("keydown", desbloquear, { once: true });
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      sub.subscription.unsubscribe();
+      window.removeEventListener("pointerdown", desbloquear);
+      window.removeEventListener("keydown", desbloquear);
+    };
   }, []);
 
   useEffect(() => {
@@ -230,6 +239,7 @@ function useData(profile) {
   const [companies, setCompanies] = useState([]);
   const [activities, setActivities] = useState([]);
   const [notifs, setNotifs] = useState([]);
+  const prevNoLeidas = useRef(null);
 
   const reload = async () => {
     const [u, c, a, n] = await Promise.all([
@@ -241,7 +251,17 @@ function useData(profile) {
     setUsers(u.data || []);
     setCompanies(c.data || []);
     setActivities((a.data || []).map(normalizeActivity));
-    setNotifs(n.data || []);
+
+    const nuevas = n.data || [];
+    const noLeidas = nuevas.filter((x) => !x.leida);
+    // Si aumentó el número de no leídas, suena la alarma (app abierta)
+    if (prevNoLeidas.current !== null && noLeidas.length > prevNoLeidas.current) {
+      const masReciente = noLeidas[0];
+      const esPrioridad = masReciente?.tipo === "prioridad";
+      sonarAlarma(esPrioridad);
+    }
+    prevNoLeidas.current = noLeidas.length;
+    setNotifs(nuevas);
   };
 
   useEffect(() => {
@@ -472,6 +492,7 @@ function Login() {
 function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload }) {
   const [open, setOpen] = useState(false);
   const [pushOn, setPushOn] = useState(permisoConcedido());
+  const [sonidoOn, setSonidoOn] = useState(alarmaHabilitada());
   const [pushMsg, setPushMsg] = useState("");
   const unread = notifs.filter((n) => !n.leida).length;
   const ref = useRef();
@@ -541,6 +562,17 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
                 </div>
               )}
               {pushOn && pushMsg && <div style={{ ...S.pushActivar, color: "var(--green)", fontSize: 12 }}>{pushMsg}</div>}
+              <div style={S.pushActivar}>
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", fontSize: 12.5, color: "var(--text)" }}>
+                  <input type="checkbox" checked={sonidoOn} style={{ width: 16, height: 16, accentColor: "var(--accent)" }}
+                    onChange={(e) => {
+                      const v = e.target.checked;
+                      setSonidoOn(v); setAlarmaHabilitada(v);
+                      if (v) { desbloquearAudio(); sonarAlarma(false); } // prueba al activar
+                    }} />
+                  Sonido y vibración al llegar avisos (app abierta)
+                </label>
+              </div>
             </div>
           )}
         </div>
