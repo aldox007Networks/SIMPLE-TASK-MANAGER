@@ -7,7 +7,7 @@ import {
   Plus, X, Camera, Check, AlertCircle, ChevronRight, Trash2,
   TrendingUp, Clock, CheckCircle2, FileText, Image as ImageIcon,
   ThumbsUp, Send, User, Download, Shield, Pencil, Quote, ThumbsDown, Timer,
-  Eye, EyeOff,
+  Eye, EyeOff, Video as VideoIcon,
 } from "lucide-react";
 
 // ============ UTILIDADES ============
@@ -56,8 +56,29 @@ async function uploadPhoto(file) {
   return { url: data.publicUrl };
 }
 
+// Sube un video al mismo bucket. Límite de 25 MB (los videos no se comprimen en el navegador).
+const MAX_VIDEO_MB = 25;
+async function uploadVideo(file) {
+  const mb = file.size / (1024 * 1024);
+  if (mb > MAX_VIDEO_MB) {
+    return { error: `El video pesa ${mb.toFixed(0)} MB. El máximo es ${MAX_VIDEO_MB} MB (graba uno más corto, ~20-30 seg).` };
+  }
+  const ext = (file.name?.split(".").pop() || "mp4").toLowerCase().slice(0, 5);
+  const name = `vid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await supabase.storage.from("fotos").upload(name, file, { contentType: file.type || "video/mp4", upsert: false });
+  if (error) { console.error("Error al subir video:", error); return { error: error.message || "No se pudo subir el video" }; }
+  const { data } = supabase.storage.from("fotos").getPublicUrl(name);
+  return { url: data.publicUrl };
+}
+
 // Helpers: una foto puede ser un string (formato viejo) o { url, descripcion } (nuevo)
 const photoUrl = (p) => (typeof p === "string" ? p : p?.url || "");
+// ¿Este elemento es un video? (por marca explícita o por extensión de la URL)
+const esVideo = (p) => {
+  if (p && typeof p === "object" && p.tipo === "video") return true;
+  const u = photoUrl(p).toLowerCase();
+  return /\.(mp4|mov|webm|m4v|3gp)(\?|$)/.test(u) || u.includes("/vid-");
+};
 
 // Helpers de rol/clasificación
 const esAdmin = (perfil) => perfil?.rol === "admin";
@@ -864,7 +885,14 @@ function ActivityCard({ a, companies, users, onClick }) {
           <Timer size={12} /> {vencida ? "Vencida: " : "Programada: "}{fmtFecha(a.fechaProgramada)}
         </div>
       )}
-      {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => <img key={i} src={photoUrl(p)} style={{ ...S.thumb, cursor: "pointer" }} alt="" onClick={(e) => { e.stopPropagation(); openLightbox(a.photos, i); }} />)}</div>}
+      {a.photos?.length > 0 && <div style={S.thumbRow}>{a.photos.slice(0, 4).map((p, i) => (
+        <div key={i} style={{ position: "relative", display: "inline-block" }} onClick={(e) => { e.stopPropagation(); openLightbox(a.photos, i); }}>
+          {esVideo(p)
+            ? <video src={photoUrl(p)} style={{ ...S.thumb, cursor: "pointer" }} muted playsInline preload="metadata" />
+            : <img src={photoUrl(p)} style={{ ...S.thumb, cursor: "pointer" }} alt="" />}
+          {esVideo(p) && <div style={{ ...S.playOverlay, fontSize: 12 }}>▶</div>}
+        </div>
+      ))}</div>}
       <MiniProgress value={a.progress} full />
     </div>
   );
@@ -975,28 +1003,55 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
 
 function PhotoUploader({ photos, setPhotos, addPhotos, busy }) {
   const ref = useRef();
+  const vidRef = useRef();
+  const [vidBusy, setVidBusy] = useState(false);
+  const [vidErr, setVidErr] = useState("");
+
   const setDesc = (i, desc) => setPhotos((ph) => ph.map((p, j) => {
     if (j !== i) return p;
-    const url = photoUrl(p);
-    return { url, descripcion: desc };
+    return { url: photoUrl(p), descripcion: desc, ...(esVideo(p) ? { tipo: "video" } : {}) };
   }));
+
+  const addVideos = async (files) => {
+    setVidBusy(true); setVidErr("");
+    const arr = [];
+    for (const f of Array.from(files).slice(0, 2)) {
+      const r = await uploadVideo(f);
+      if (r.url) arr.push({ url: r.url, descripcion: "", tipo: "video" });
+      else if (r.error) setVidErr(r.error);
+    }
+    setPhotos((p) => [...p, ...arr].slice(0, 8));
+    setVidBusy(false);
+  };
+
   return (
     <div>
-      <div style={S.uploadZone} onClick={() => ref.current?.click()}>
-        <Camera size={20} color="var(--accent)" />
-        <span>{busy ? "Subiendo…" : "Toca para agregar fotos"}</span>
-        <input ref={ref} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => e.target.files && addPhotos(e.target.files)} />
+      <div style={{ display: "flex", gap: 10 }} className="formrow">
+        <div style={{ ...S.uploadZone, flex: 1 }} onClick={() => ref.current?.click()}>
+          <Camera size={20} color="var(--accent)" />
+          <span>{busy ? "Subiendo…" : "Agregar fotos"}</span>
+          <input ref={ref} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => e.target.files && addPhotos(e.target.files)} />
+        </div>
+        <div style={{ ...S.uploadZone, flex: 1 }} onClick={() => vidRef.current?.click()}>
+          <VideoIcon size={20} color="#60a5fa" />
+          <span>{vidBusy ? "Subiendo…" : "Agregar video"}</span>
+          <input ref={vidRef} type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => e.target.files && addVideos(e.target.files)} />
+        </div>
       </div>
+      {vidErr && <div style={{ ...S.errBox, marginTop: 8 }}><AlertCircle size={14} /> {vidErr}</div>}
       {photos.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
           {photos.map((p, i) => (
             <div key={i} style={S.photoItem}>
               <div style={S.thumbWrap}>
-                <img src={photoUrl(p)} style={S.thumbLg} alt="" />
+                {esVideo(p)
+                  ? <video src={photoUrl(p)} style={S.thumbLg} muted playsInline />
+                  : <img src={photoUrl(p)} style={S.thumbLg} alt="" />}
+                {esVideo(p) && <div style={S.videoBadge}><VideoIcon size={12} /></div>}
                 <button style={S.thumbDel} onClick={() => setPhotos((ph) => ph.filter((_, j) => j !== i))}><X size={12} /></button>
               </div>
               <input style={{ ...S.input, flex: 1 }} value={photoDesc(p)} onChange={(e) => setDesc(i, e.target.value)}
-                placeholder="Descripción de la foto (opcional)" />
+                placeholder={esVideo(p) ? "Descripción del video (opcional)" : "Descripción de la foto (opcional)"} />
             </div>
           ))}
         </div>
@@ -2249,7 +2304,12 @@ function PhotoGallery({ photos }) {
     <div style={S.galleryGrid}>
       {photos.map((p, i) => (
         <div key={i} style={S.galleryItem}>
-          <img src={photoUrl(p)} style={{ ...S.thumbLg, cursor: "pointer" }} alt="" onClick={() => openLightbox(photos, i)} />
+          <div style={{ position: "relative", cursor: "pointer" }} onClick={() => openLightbox(photos, i)}>
+            {esVideo(p)
+              ? <video src={photoUrl(p)} style={S.thumbLg} muted playsInline preload="metadata" />
+              : <img src={photoUrl(p)} style={S.thumbLg} alt="" />}
+            {esVideo(p) && <div style={S.playOverlay}>▶</div>}
+          </div>
           {photoDesc(p) && <div style={S.galleryDesc}>{photoDesc(p)}</div>}
         </div>
       ))}
@@ -2293,7 +2353,9 @@ function Lightbox() {
     <div style={S.lbOverlay} onClick={() => setPhotos(null)}>
       <button style={S.lbClose} onClick={() => setPhotos(null)}><X size={24} /></button>
       {many && <button style={{ ...S.lbNav, left: 12 }} onClick={prev}><ChevronRight size={28} style={{ transform: "rotate(180deg)" }} /></button>}
-      <img src={photoUrl(photos[idx])} style={S.lbImage} alt="" onClick={(e) => e.stopPropagation()} />
+      {esVideo(photos[idx])
+        ? <video src={photoUrl(photos[idx])} style={S.lbImage} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
+        : <img src={photoUrl(photos[idx])} style={S.lbImage} alt="" onClick={(e) => e.stopPropagation()} />}
       {many && <button style={{ ...S.lbNav, right: 12 }} onClick={next}><ChevronRight size={28} /></button>}
       {photoDesc(photos[idx]) && <div style={S.lbDesc} onClick={(e) => e.stopPropagation()}>{photoDesc(photos[idx])}</div>}
       {many && <div style={S.lbCounter}>{idx + 1} / {photos.length}</div>}
@@ -2453,6 +2515,8 @@ const S = {
   galleryGrid: { display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10 },
   galleryItem: { width: 88, display: "flex", flexDirection: "column", gap: 4 },
   galleryDesc: { fontSize: 11, color: "var(--muted)", lineHeight: 1.35, wordBreak: "break-word" },
+  videoBadge: { position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,.65)", color: "#fff", borderRadius: 5, padding: "2px 5px", display: "grid", placeItems: "center" },
+  playOverlay: { position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#fff", fontSize: 22, textShadow: "0 2px 8px rgba(0,0,0,.8)", pointerEvents: "none" },
   lbDesc: { position: "absolute", bottom: 64, left: "50%", transform: "translateX(-50%)", maxWidth: "85%", color: "#fff", fontSize: 14, lineHeight: 1.4, textAlign: "center", background: "rgba(0,0,0,.6)", padding: "10px 16px", borderRadius: 10 },
   lbOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,.92)", display: "grid", placeItems: "center", padding: 20, zIndex: 400 },
   lbImage: { maxWidth: "100%", maxHeight: "85vh", objectFit: "contain", borderRadius: 8 },
