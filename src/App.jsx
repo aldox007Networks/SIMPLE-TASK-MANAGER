@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { supabase } from "./supabase";
-import { registerPushSW, activarNotificaciones, permisoConcedido } from "./push";
+import { registerPushSW, activarNotificaciones, permisoConcedido, refrescarSuscripcion } from "./push";
 import { sonarAlarma, desbloquearAudio, alarmaHabilitada, setAlarmaHabilitada } from "./alarma";
 import {
   Bell, LayoutDashboard, ClipboardList, Building2, Users, LogOut,
@@ -193,7 +193,7 @@ export default function App() {
     if (!session) { setProfile(null); return; }
     (async () => {
       const { data } = await supabase.from("perfiles").select("*").eq("id", session.user.id).single();
-      if (data) { setProfile(data); return; }
+      if (data) { setProfile(data); refrescarSuscripcion(data.id); return; }
       // Red de seguridad: si el usuario no tiene perfil, lo creamos ahora
       const meta = session.user.user_metadata || {};
       const { count } = await supabase.from("perfiles").select("*", { count: "exact", head: true });
@@ -527,7 +527,7 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
   const activar = async () => {
     setPushMsg("");
     const r = await activarNotificaciones(profile.id);
-    if (r.ok) { setPushOn(true); setPushMsg("¡Notificaciones activadas!"); }
+    if (r.ok) { setPushOn(true); setPushMsg("¡Avisos activados en este celular!"); }
     else setPushMsg(r.error || "No se pudo activar.");
   };
 
@@ -576,13 +576,13 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
                   </div>
                 ))}
               </div>
-              {!pushOn && (
-                <div style={S.pushActivar}>
-                  <button style={S.btnSm} onClick={activar}><Bell size={13} /> Activar avisos en este celular</button>
-                  {pushMsg && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>{pushMsg}</div>}
-                </div>
-              )}
-              {pushOn && pushMsg && <div style={{ ...S.pushActivar, color: "var(--green)", fontSize: 12 }}>{pushMsg}</div>}
+              <div style={S.pushActivar}>
+                <button style={S.btnSm} onClick={activar}>
+                  <Bell size={13} /> {pushOn ? "Renovar avisos en este celular" : "Activar avisos en este celular"}
+                </button>
+                {pushMsg && <div style={{ fontSize: 11.5, color: pushOn ? "var(--green)" : "var(--muted)", marginTop: 6 }}>{pushMsg}</div>}
+                {pushOn && !pushMsg && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6 }}>Si dejaron de llegar los avisos, toca aquí para renovarlos.</div>}
+              </div>
               <div style={S.pushActivar}>
                 <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", fontSize: 12.5, color: "var(--text)" }}>
                   <input type="checkbox" checked={sonidoOn} style={{ width: 16, height: 16, accentColor: "var(--accent)" }}
