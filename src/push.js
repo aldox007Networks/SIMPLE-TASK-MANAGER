@@ -32,6 +32,12 @@ export async function activarNotificaciones(userId) {
   if (permiso !== "granted") return { ok: false, error: "Permiso de notificaciones no concedido." };
 
   const reg = await navigator.serviceWorker.ready;
+  // Si ya había una suscripción, la cancelamos para crear una fresca
+  try {
+    const vieja = await reg.pushManager.getSubscription();
+    if (vieja) await vieja.unsubscribe();
+  } catch (e) {}
+
   const sub = await reg.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
@@ -43,6 +49,30 @@ export async function activarNotificaciones(userId) {
   const { error } = await supabase.from("push_subs").insert({ user_id: userId, sub: subJson });
   if (error) return { ok: false, error: error.message };
   return { ok: true };
+}
+
+// Refresca la suscripción en segundo plano al abrir la app (si ya hay permiso).
+// Esto evita que las suscripciones caduquen sin que nadie lo note.
+export async function refrescarSuscripcion(userId) {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (Notification.permission !== "granted") return;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    // Si no hay suscripción activa, crear una
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
+      });
+    }
+    const subJson = sub.toJSON();
+    // Upsert: borrar la que tenga este endpoint y volver a guardar (mantiene fresca la BD)
+    await supabase.from("push_subs").delete().eq("user_id", userId).eq("sub->>endpoint", subJson.endpoint);
+    await supabase.from("push_subs").insert({ user_id: userId, sub: subJson });
+  } catch (e) {
+    // Silencioso: es una tarea de mantenimiento en segundo plano
+  }
 }
 
 // ¿Ya tiene permiso concedido?
