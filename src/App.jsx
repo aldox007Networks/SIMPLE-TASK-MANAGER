@@ -805,6 +805,8 @@ function AdminActivities({ activities, setOpenActId, openActId, companies, users
     if (act) return <ActivityDetail activity={act} companies={companies} users={users} profile={profile} reload={reload} isAdmin onBack={() => setOpenActId(null)} />;
   }
   const members = users.filter((u) => u.rol === "member");
+  // El admin también puede asignarse actividades a sí mismo
+  const asignables = [...members, ...users.filter((u) => u.id === profile.id && u.rol === "admin")];
 
   const enProceso = activities.filter((a) => a.progress < 100);
   const terminadas = activities.filter((a) => a.progress >= 100);
@@ -833,10 +835,10 @@ function AdminActivities({ activities, setOpenActId, openActId, companies, users
         {visibles.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => setOpenActId(a.id)} />)}
       </div>
       {creating && (
-        <ActivityForm companies={companies} members={members} onClose={() => setCreating(false)}
+        <ActivityForm companies={companies} members={asignables} onClose={() => setCreating(false)}
           onSave={async (data) => {
             const row = await Api.createActivity(data, profile.id);
-            if (row) {
+            if (row && data.assignedTo !== profile.id) {
               if (data.altaPrioridad) await Api.pushNotif(data.assignedTo, `🔴 ALTA PRIORIDAD: "${data.title}" — atiéndela cuanto antes`, row.id, "prioridad");
               else await Api.pushNotif(data.assignedTo, `Nueva actividad asignada: "${data.title}"`, row.id, "assign");
             }
@@ -1121,7 +1123,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
     const vb = pideVB ? { solicita: true, motivo: motivoVB.trim() } : null;
     await Api.addUpdate(a.id, profile.id, text.trim(), photos, pct, a, vb);
     const reached100 = pct >= 100 && a.progress < 100;
-    if (admin) {
+    if (admin && admin.id !== profile.id) {
       if (vb) await Api.pushNotif(admin.id, `${profile.nombre} solicita tu visto bueno en "${a.title}" (avance ${pct}%)`, a.id, "approval");
       else if (reached100) await Api.pushNotif(admin.id, `"${a.title}" se completó al 100% (${profile.nombre})`, a.id, "done");
       else await Api.pushNotif(admin.id, `Avance en "${a.title}": ${pct}% (${profile.nombre})`, a.id, "progress");
@@ -1286,7 +1288,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
         </div>
       )}
 
-      {!isAdmin && a.assignedTo === profile.id && (() => {
+      {a.assignedTo === profile.id && (() => {
         const hoy = new Date().toISOString().slice(0, 10);
         const aunNoInicia = a.fechaProgramada && a.fechaProgramada > hoy;
         if (aunNoInicia) {
@@ -1897,14 +1899,17 @@ function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
       </div>
 
       {convirtiendo && (
-        <ActivityForm companies={companies} members={users.filter((u) => u.rol === "member")}
+        <ActivityForm companies={companies} members={[...users.filter((u) => u.rol === "member"), ...users.filter((u) => u.id === profile.id && u.rol === "admin")]}
           initial={{ title: convirtiendo.titulo, description: convirtiendo.descripcion, companyId: convirtiendo.empresa_id, assignedTo: "", photos: convirtiendo.fotos }}
           onClose={() => setConvirtiendo(null)}
           onSave={async (dataForm) => {
             const row = await Api.createActivity(dataForm, profile.id);
             if (row) {
               await Api.detalleAActividad(convirtiendo, row.id);
-              await Api.pushNotif(dataForm.assignedTo, `Nueva actividad asignada: "${dataForm.title}"`, row.id, "assign");
+              // No enviar notificación push si el admin se la asignó a sí mismo
+              if (dataForm.assignedTo !== profile.id) {
+                await Api.pushNotif(dataForm.assignedTo, `Nueva actividad asignada: "${dataForm.title}"`, row.id, "assign");
+              }
             }
             setConvirtiendo(null); cargar(); reload();
           }} />
