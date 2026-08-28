@@ -1608,6 +1608,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
   const [editEmail, setEditEmail] = useState("");
   const [editPass, setEditPass] = useState("");
   const [editClasif, setEditClasif] = useState("especialista");
+  const [editEmpresasSup, setEditEmpresasSup] = useState([]);
   const [editErr, setEditErr] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
@@ -1633,7 +1634,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
       if (error || data?.error) { setEditErr(data?.error || "No se pudo actualizar."); setEditBusy(false); return; }
       // Guardar la clasificación (supervisor/especialista) si no es admin
       if (editUser.rol !== "admin") {
-        await Api.updateUser(editUser.id, { clasificacion: editClasif });
+        await Api.updateUser(editUser.id, { clasificacion: editClasif, empresas_supervisa: editClasif === "supervisor" ? editEmpresasSup : [] });
       }
       setEditUser(null); setEditEmail(""); setEditPass(""); reload();
     } catch (e) {
@@ -1688,7 +1689,7 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
                 <h4 style={S.entityName}>{m.nombre}</h4>
                 <div style={S.entityTag}>{assigned.length} asignadas · {doneN} completadas · ver historial</div>
               </div>
-              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); setEditEmail(""); setEditPass(""); setEditClasif(m.clasificacion || "especialista"); setEditErr(""); }} title="Editar integrante"><Pencil size={14} /></button>
+              <button style={S.iconBtnSm} onClick={() => { setEditUser(m); setEditName(m.nombre); setEditEmail(""); setEditPass(""); setEditClasif(m.clasificacion || "especialista"); setEditEmpresasSup(m.empresas_supervisa || []); setEditErr(""); }} title="Editar integrante"><Pencil size={14} /></button>
             </div>
           );
         })}
@@ -1736,6 +1737,29 @@ function Team({ users, activities, reload, companies, onOpenActivity }) {
               <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
                 El <b>Supervisor</b> puede crear y asignar actividades a los especialistas, marcar alta prioridad y dar seguimiento. El <b>Especialista</b> ejecuta las actividades que se le asignan.
               </p>
+              {editClasif === "supervisor" && (
+                <div style={{ marginTop: 12 }}>
+                  <label style={S.label}>Empresas que supervisa</label>
+                  <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 2, marginBottom: 8 }}>
+                    Marca las empresas cuyo tablero de supervisión podrá ver y gestionar.
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                    {companies.map((c) => {
+                      const marcada = editEmpresasSup.includes(c.id);
+                      return (
+                        <label key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13.5, padding: "6px 8px", background: marcada ? "rgba(245,158,11,.1)" : "var(--bg)", borderRadius: 8, border: `1px solid ${marcada ? "var(--accent)" : "var(--line)"}` }}>
+                          <input type="checkbox" checked={marcada} style={{ width: 16, height: 16, accentColor: "var(--accent)" }}
+                            onChange={(e) => {
+                              if (e.target.checked) setEditEmpresasSup((prev) => [...prev, c.id]);
+                              else setEditEmpresasSup((prev) => prev.filter((id) => id !== c.id));
+                            }} />
+                          {c.nombre}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -2080,6 +2104,111 @@ function Rendimiento({ activities, users }) {
   );
 }
 
+// ============ DASHBOARD DE SUPERVISIÓN (por empresa) ============
+function DashboardSupervision({ activities, companies, users, profile, reload, empresasSup, onOpen }) {
+  const [creando, setCreando] = useState(null); // empresa donde crear
+  const especialistas = users.filter((u) => esEspecialista(u));
+  // Solo las empresas que este supervisor tiene asignadas
+  const misEmpresas = companies.filter((c) => empresasSup.includes(c.id));
+
+  return (
+    <div>
+      <PageHead title="Supervisión" sub="Actividades de tus empresas, agrupadas y por estado" />
+
+      {/* Resumen global de todas sus empresas */}
+      {(() => {
+        const acts = activities.filter((a) => empresasSup.includes(a.companyId));
+        const porIniciar = acts.filter((a) => a.progress === 0).length;
+        const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100).length;
+        const terminadas = acts.filter((a) => a.progress >= 100).length;
+        return (
+          <div style={S.kpiGrid} className="kpigrid">
+            <KpiCard icon={Clock} label="Por iniciar" value={porIniciar} tone="muted" />
+            <KpiCard icon={ClipboardList} label="En proceso" value={enProceso} tone="amber" />
+            <KpiCard icon={CheckCircle2} label="Terminadas" value={terminadas} tone="green" />
+          </div>
+        );
+      })()}
+
+      {misEmpresas.length === 0 && <Empty text="No tienes empresas asignadas para supervisar. Pídele al administrador que te las asigne." />}
+
+      {/* Una sección por empresa */}
+      {misEmpresas.map((emp) => {
+        const acts = activities.filter((a) => a.companyId === emp.id);
+        const porIniciar = acts.filter((a) => a.progress === 0);
+        const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
+        const terminadas = acts.filter((a) => a.progress >= 100);
+        return (
+          <div key={emp.id} style={S.supEmpBlock}>
+            <div style={S.supEmpHead}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={S.supEmpIcon}><Building2 size={18} /></div>
+                <div>
+                  <h3 style={S.supEmpName}>{emp.nombre}</h3>
+                  <span style={S.supEmpCount}>{acts.length} actividad{acts.length !== 1 ? "es" : ""}</span>
+                </div>
+              </div>
+              <button style={S.btnSm} onClick={() => setCreando(emp)}><Plus size={14} /> Nueva</button>
+            </div>
+
+            {/* Mini-resumen de la empresa */}
+            <div style={S.supStatRow}>
+              <span style={S.supStat}><span style={{ ...S.supDot, background: "var(--muted)" }} /> Por iniciar: <b>{porIniciar.length}</b></span>
+              <span style={S.supStat}><span style={{ ...S.supDot, background: "var(--amber)" }} /> En proceso: <b>{enProceso.length}</b></span>
+              <span style={S.supStat}><span style={{ ...S.supDot, background: "var(--green)" }} /> Terminadas: <b>{terminadas.length}</b></span>
+            </div>
+
+            {acts.length === 0 && <Empty text="Sin actividades en esta empresa." mini />}
+
+            {/* Lista compacta de actividades con estado, avance y responsable */}
+            {acts.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                {[...enProceso, ...porIniciar, ...terminadas].map((a) => {
+                  const who = users.find((u) => u.id === a.assignedTo);
+                  const estado = a.progress >= 100 ? "Terminada" : a.progress > 0 ? "En proceso" : "Por iniciar";
+                  const color = a.progress >= 100 ? "var(--green)" : a.progress > 0 ? "var(--amber)" : "var(--muted)";
+                  return (
+                    <div key={a.id} style={S.supActRow} onClick={() => onOpen(a.id)}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          {a.altaPrioridad && !a.prioridadTerminada && <AlertCircle size={13} color="#f87171" />}
+                          <span style={S.supActTitle}>{a.title}</span>
+                        </div>
+                        <div style={S.supActMeta}>
+                          <span><User size={11} /> {who?.nombre || "Sin asignar"}</span>
+                          <span style={{ color }}>● {estado}</span>
+                        </div>
+                      </div>
+                      <div style={S.supActProg}>
+                        <div style={S.supProgBar}><div style={{ ...S.supProgFill, width: `${a.progress}%`, background: color }} /></div>
+                        <span style={S.supProgPct}>{a.progress}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {creando && (
+        <ActivityForm companies={[creando]} members={especialistas}
+          initial={{ companyId: creando.id }}
+          onClose={() => setCreando(null)}
+          onSave={async (d) => {
+            const row = await Api.createActivity(d, profile.id);
+            if (row) {
+              if (d.altaPrioridad) await Api.pushNotif(d.assignedTo, `🔴 ALTA PRIORIDAD: "${d.title}" — atiéndela cuanto antes`, row.id, "prioridad");
+              else await Api.pushNotif(d.assignedTo, `Nueva actividad asignada: "${d.title}"`, row.id, "assign");
+            }
+            setCreando(null); reload();
+          }} />
+      )}
+    </div>
+  );
+}
+
 function MemberApp({ profile }) {
   const data = useData(profile);
   const [openActId, setOpenActId] = useState(null);
@@ -2119,6 +2248,9 @@ function MemberApp({ profile }) {
     { id: "detalle", label: "Detalle", icon: AlertCircle },
   ];
   if (supervisor) navItems.push({ id: "prioridades", label: "Prioridades", icon: Shield });
+  const empresasSup = profile.empresas_supervisa || [];
+  const tieneSupervision = supervisor && empresasSup.length > 0;
+  if (tieneSupervision) navItems.push({ id: "supervision", label: "Supervisión", icon: LayoutDashboard });
 
   const especialistas = data.users.filter((u) => esEspecialista(u));
 
@@ -2155,6 +2287,10 @@ function MemberApp({ profile }) {
           {vista === "detalle" && <ReportarDetalle companies={data.companies} profile={profile} reload={data.reload} />}
           {vista === "prioridades" && supervisor && (
             <SeguimientoPrioridades activities={data.activities} companies={data.companies} users={data.users} profile={profile} reload={data.reload} onOpen={setOpenActId} />
+          )}
+          {vista === "supervision" && tieneSupervision && (
+            <DashboardSupervision activities={data.activities} companies={data.companies} users={data.users}
+              profile={profile} reload={data.reload} empresasSup={empresasSup} onOpen={setOpenActId} />
           )}
           <Footer />
         </main>
@@ -2450,6 +2586,21 @@ const S = {
   pill: { fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, border: "1px solid", letterSpacing: .3 },
   approvalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
   recurTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#60a5fa", background: "rgba(96,165,250,.12)", padding: "3px 9px", borderRadius: 20 },
+  supEmpBlock: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 16, padding: 16, marginBottom: 16 },
+  supEmpHead: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" },
+  supEmpIcon: { width: 38, height: 38, borderRadius: 10, background: "rgba(245,158,11,.12)", color: "var(--accent)", display: "grid", placeItems: "center", flexShrink: 0 },
+  supEmpName: { margin: 0, fontSize: 16, fontWeight: 700, color: "var(--text)" },
+  supEmpCount: { fontSize: 12, color: "var(--muted)" },
+  supStatRow: { display: "flex", gap: 14, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg)", borderRadius: 10, marginBottom: 12 },
+  supStat: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted)" },
+  supDot: { width: 8, height: 8, borderRadius: 4, display: "inline-block" },
+  supActRow: { display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: "var(--bg)", borderRadius: 10, cursor: "pointer", border: "1px solid var(--line)" },
+  supActTitle: { fontSize: 14, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  supActMeta: { display: "flex", gap: 12, marginTop: 3, fontSize: 12, color: "var(--muted)", flexWrap: "wrap" },
+  supActProg: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0, width: 90 },
+  supProgBar: { width: "100%", height: 6, background: "var(--line)", borderRadius: 3, overflow: "hidden" },
+  supProgFill: { height: "100%", borderRadius: 3 },
+  supProgPct: { fontSize: 11, fontWeight: 700, color: "var(--text)" },
   prioridadBanner: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#f87171", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "6px 10px", borderRadius: 8, marginBottom: 10, letterSpacing: 0.3 },
   pendTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#f87171", background: "rgba(239,68,68,.12)", padding: "3px 9px", borderRadius: 20 },
   obsItem: { background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, fontSize: 13, lineHeight: 1.5 },
