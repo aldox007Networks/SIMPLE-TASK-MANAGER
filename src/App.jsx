@@ -637,6 +637,7 @@ function AdminApp({ profile }) {
   const tabs = [
     { id: "dash", label: "Panel", icon: LayoutDashboard },
     { id: "activities", label: "Actividades", icon: ClipboardList },
+    { id: "misactividades", label: "Mis Actividades", icon: User },
     { id: "detalles", label: "Detalles", icon: AlertCircle },
     { id: "buscar", label: "Buscar", icon: FileText },
     { id: "reporte", label: "Reporte", icon: FileText },
@@ -668,6 +669,7 @@ function AdminApp({ profile }) {
           )}
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
+          {tab === "misactividades" && <MisActividadesAdmin activities={data.activities} companies={data.companies} users={data.users} profile={profile} reload={data.reload} />}
           {tab === "detalles" && <DetallesAdmin {...shared} onConvertido={data.reload} />}
           {tab === "buscar" && <BuscarActividades activities={data.activities} companies={data.companies} users={data.users} onOpen={openActivity} empresasPermitidas={null} />}
           {tab === "reporte" && <ReporteEstado activities={data.activities} companies={data.companies} users={data.users} empresasPermitidas={null} />}
@@ -821,6 +823,50 @@ function Dashboard({ activities, users, companies, onOpenActivity }) {
 }
 
 // ============ ADMIN: ACTIVIDADES ============
+// ============ MIS ACTIVIDADES (Admin) ============
+function MisActividadesAdmin({ activities, companies, users, profile, reload }) {
+  const [filtro, setFiltro] = useState("proceso"); // proceso | sinIniciar | terminadas
+  const [abierta, setAbierta] = useState(null);
+
+  if (abierta) {
+    const act = activities.find((a) => a.id === abierta);
+    if (act) return <ActivityDetail activity={act} companies={companies} users={users} profile={profile} reload={reload} isAdmin onBack={() => setAbierta(null)} />;
+  }
+
+  // Solo las actividades asignadas al propio admin (autoasignadas y personales)
+  const mias = activities.filter((a) => a.assignedTo === profile.id);
+  const enProceso = mias.filter((a) => a.progress > 0 && a.progress < 100);
+  const sinIniciar = mias.filter((a) => a.progress === 0);
+  const terminadas = mias.filter((a) => a.progress >= 100);
+  const base = filtro === "proceso" ? enProceso : filtro === "sinIniciar" ? sinIniciar : terminadas;
+  // Prioridades activas primero
+  const visibles = [...base].sort((x, y) => {
+    const px = x.altaPrioridad && !x.prioridadTerminada ? 1 : 0;
+    const py = y.altaPrioridad && !y.prioridadTerminada ? 1 : 0;
+    return py - px;
+  });
+
+  return (
+    <div>
+      <PageHead title="Mis Actividades" sub="Actividades que te has asignado o creado para ti" />
+      <div style={S.kpiGrid} className="kpigrid">
+        <KpiCard icon={ClipboardList} label="En proceso" value={enProceso.length} tone="amber" />
+        <KpiCard icon={Clock} label="Sin iniciar" value={sinIniciar.length} tone="muted" />
+        <KpiCard icon={CheckCircle2} label="Terminadas" value={terminadas.length} tone="green" />
+      </div>
+      <div style={S.chipRow}>
+        <button style={filtro === "proceso" ? S.chipActive : S.chip} onClick={() => setFiltro("proceso")}>En proceso ({enProceso.length})</button>
+        <button style={filtro === "sinIniciar" ? S.chipActive : S.chip} onClick={() => setFiltro("sinIniciar")}>Sin iniciar ({sinIniciar.length})</button>
+        <button style={filtro === "terminadas" ? S.chipActive : S.chip} onClick={() => setFiltro("terminadas")}>Terminadas ({terminadas.length})</button>
+      </div>
+      <div style={S.cardGrid} className="cardgrid">
+        {visibles.length === 0 && <Empty text="No tienes actividades en este estado." />}
+        {visibles.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => setAbierta(a.id)} />)}
+      </div>
+    </div>
+  );
+}
+
 function AdminActivities({ activities, setOpenActId, openActId, companies, users, profile, reload }) {
   const [creating, setCreating] = useState(false);
   const [filtro, setFiltro] = useState("proceso"); // proceso | terminadas | todas
