@@ -361,6 +361,7 @@ const Api = {
       periodicidad: data.periodicidad || null,
       fecha_programada: data.fechaProgramada || null,
       alta_prioridad: data.altaPrioridad || false,
+      es_personal: data.esPersonal || false,
     }).eq("id", id);
   },
   // El especialista confirma que vio la prioridad
@@ -947,7 +948,7 @@ function ActivityForm({ companies, members, onClose, onSave, initial, adminSelfI
   const [periodicidad, setPeriodicidad] = useState(initial?.periodicidad || "");
   const [altaPrioridad, setAltaPrioridad] = useState(initial?.altaPrioridad || false);
   const [fechaProgramada, setFechaProgramada] = useState(initial?.fechaProgramada || "");
-  const [esPersonal, setEsPersonal] = useState(false);
+  const [esPersonal, setEsPersonal] = useState(initial?.esPersonal || false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoErr, setPhotoErr] = useState("");
@@ -1447,13 +1448,25 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
 
       {/* Modal: admin edita la actividad */}
       {editandoActividad && (
-        <ActivityForm companies={companies} members={users.filter((u) => u.rol === "member")}
-          initial={{ title: a.title, description: a.description, companyId: a.companyId, assignedTo: a.assignedTo, photos: a.photos }}
+        <ActivityForm companies={companies}
+          members={[...users.filter((u) => u.rol === "member"), ...(isAdmin ? users.filter((u) => u.id === profile.id && u.rol === "admin") : [])]}
+          adminSelfId={isAdmin ? profile.id : undefined}
+          initial={{ title: a.title, description: a.description, companyId: a.companyId, assignedTo: a.assignedTo, photos: a.photos, esPersonal: a.esPersonal }}
           onClose={() => setEditandoActividad(false)}
           onSave={async (data) => {
             const cambioAsignado = data.assignedTo !== a.assignedTo;
+            const responsableAnterior = a.assignedTo;
             await Api.updateActivity(a.id, data);
-            if (cambioAsignado) await Api.pushNotif(data.assignedTo, `Se te asignó la actividad: "${data.title}"`, a.id, "assign");
+            if (cambioAsignado) {
+              // Avisar al nuevo responsable (si no es el propio admin ni actividad personal)
+              if (!data.esPersonal && data.assignedTo !== profile.id) {
+                await Api.pushNotif(data.assignedTo, `Se te asignó la actividad: "${data.title}"`, a.id, "assign");
+              }
+              // Avisar a la persona a quien se le quitó (aviso genérico)
+              if (responsableAnterior && responsableAnterior !== data.assignedTo && responsableAnterior !== profile.id) {
+                await Api.pushNotif(responsableAnterior, `La actividad "${data.title}" fue reasignada a otro miembro del equipo.`, a.id, "info");
+              }
+            }
             setEditandoActividad(false); reload();
           }} />
       )}
