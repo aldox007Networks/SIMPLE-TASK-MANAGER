@@ -323,6 +323,20 @@ const Api = {
   async pushNotif(toUserId, text, activityId, kind = "info") {
     await supabase.from("notificaciones").insert({ destinatario: toUserId, texto: text, actividad_id: activityId, tipo: kind });
   },
+  // Notifica a los supervisores cuya lista de empresas incluye esta empresa.
+  // Se salta al responsable (que ya recibe su propia notificación) y a quien la creó.
+  async notificarSupervisores(companyId, texto, activityId, excluirIds = []) {
+    if (!companyId) return;
+    const { data: sups } = await supabase.from("perfiles").select("id, empresas_supervisa")
+      .eq("rol", "member").eq("clasificacion", "supervisor");
+    if (!sups) return;
+    for (const s of sups) {
+      const empresas = s.empresas_supervisa || [];
+      if (empresas.includes(companyId) && !excluirIds.includes(s.id)) {
+        await this.pushNotif(s.id, texto, activityId, "info");
+      }
+    }
+  },
   async createActivity(data, createdBy) {
     const { data: row } = await supabase.from("actividades").insert({
       titulo: data.title, descripcion: data.description, empresa_id: data.companyId,
@@ -617,6 +631,8 @@ function AdminApp({ profile }) {
     { id: "dash", label: "Panel", icon: LayoutDashboard },
     { id: "activities", label: "Actividades", icon: ClipboardList },
     { id: "detalles", label: "Detalles", icon: AlertCircle },
+    { id: "buscar", label: "Buscar", icon: FileText },
+    { id: "reporte", label: "Reporte", icon: FileText },
     { id: "prioridades", label: "Prioridades", icon: Shield },
     { id: "rendimiento", label: "Rendimiento", icon: TrendingUp },
     { id: "companies", label: "Empresas", icon: Building2 },
@@ -646,6 +662,8 @@ function AdminApp({ profile }) {
           {tab === "dash" && <Dashboard {...shared} onOpenActivity={openActivity} />}
           {tab === "activities" && <AdminActivities {...shared} openActId={openActId} setOpenActId={setOpenActId} />}
           {tab === "detalles" && <DetallesAdmin {...shared} onConvertido={data.reload} />}
+          {tab === "buscar" && <BuscarActividades activities={data.activities} companies={data.companies} users={data.users} onOpen={openActivity} empresasPermitidas={null} />}
+          {tab === "reporte" && <ReporteEstado activities={data.activities} companies={data.companies} users={data.users} empresasPermitidas={null} />}
           {tab === "prioridades" && <SeguimientoPrioridades activities={data.activities} companies={data.companies} users={data.users} profile={profile} reload={data.reload} onOpen={openActivity} />}
           {tab === "rendimiento" && <Rendimiento activities={data.activities} users={data.users} />}
           {tab === "companies" && <Companies {...shared} onOpenActivity={openActivity} />}
@@ -841,6 +859,11 @@ function AdminActivities({ activities, setOpenActId, openActId, companies, users
             if (row && data.assignedTo !== profile.id) {
               if (data.altaPrioridad) await Api.pushNotif(data.assignedTo, `🔴 ALTA PRIORIDAD: "${data.title}" — atiéndela cuanto antes`, row.id, "prioridad");
               else await Api.pushNotif(data.assignedTo, `Nueva actividad asignada: "${data.title}"`, row.id, "assign");
+            }
+            // Avisar a los supervisores de esa empresa (menos al responsable y a quien la creó)
+            if (row) {
+              const emp = companies.find((c) => c.id === data.companyId);
+              await Api.notificarSupervisores(data.companyId, `Nueva actividad en ${emp?.nombre || "una empresa"}: "${data.title}"`, row.id, [data.assignedTo, profile.id]);
             }
             setCreating(false); reload();
           }} />
@@ -1934,6 +1957,9 @@ function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
               if (dataForm.assignedTo !== profile.id) {
                 await Api.pushNotif(dataForm.assignedTo, `Nueva actividad asignada: "${dataForm.title}"`, row.id, "assign");
               }
+              // Avisar a los supervisores de esa empresa
+              const emp = companies.find((c) => c.id === dataForm.companyId);
+              await Api.notificarSupervisores(dataForm.companyId, `Nueva actividad en ${emp?.nombre || "una empresa"}: "${dataForm.title}"`, row.id, [dataForm.assignedTo, profile.id]);
             }
             setConvirtiendo(null); cargar(); reload();
           }} />
@@ -2105,6 +2131,147 @@ function Rendimiento({ activities, users }) {
 }
 
 // ============ DASHBOARD DE SUPERVISIÓN (por empresa) ============
+// ============ BÚSQUEDA POR EMPRESA + PALABRAS (Admin y Supervisores) ============
+function BuscarActividades({ activities, companies, users, onOpen, empresasPermitidas }) {
+  // empresasPermitidas = null => todas (admin); array => solo esas (supervisor)
+  const empresas = empresasPermitidas
+    ? companies.filter((c) => empresasPermitidas.includes(c.id))
+    : companies;
+  const [empresaId, setEmpresaId] = useState("");
+  const [texto, setTexto] = useState("");
+
+  const q = texto.trim().toLowerCase();
+  const resultados = empresaId
+    ? activities.filter((a) => {
+        if (a.companyId !== empresaId) return false;
+        if (!q) return true;
+        const who = users.find((u) => u.id === a.assignedTo);
+        const enTitulo = (a.title || "").toLowerCase().includes(q);
+        const enDesc = (a.description || "").toLowerCase().includes(q);
+        const enResp = (who?.nombre || "").toLowerCase().includes(q);
+        return enTitulo || enDesc || enResp;
+      })
+    : [];
+
+  return (
+    <div>
+      <PageHead title="Buscar actividades" sub="Elige una empresa y busca por palabras" />
+      <label style={S.label}>Empresa</label>
+      <select style={S.select} value={empresaId} onChange={(e) => setEmpresaId(e.target.value)}>
+        <option value="">— Selecciona una empresa —</option>
+        {empresas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+      </select>
+
+      {empresaId && (
+        <>
+          <label style={{ ...S.label, marginTop: 14 }}>Palabras a buscar</label>
+          <input style={S.input} value={texto} onChange={(e) => setTexto(e.target.value)}
+            placeholder="Título, descripción o responsable… (deja vacío para ver todas)" autoFocus />
+
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+            {resultados.length} resultado{resultados.length !== 1 ? "s" : ""}
+          </div>
+          <div style={S.cardGrid} className="cardgrid">
+            {resultados.length === 0 && <Empty text="Sin coincidencias en esta empresa." mini />}
+            {resultados.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => onOpen(a.id)} />)}
+          </div>
+        </>
+      )}
+      {!empresaId && <Empty text="Selecciona una empresa para comenzar la búsqueda." />}
+    </div>
+  );
+}
+
+// ============ REPORTE DE ESTADO (Admin y Supervisores) ============
+function ReporteEstado({ activities, companies, users, empresasPermitidas }) {
+  const [generado, setGenerado] = useState(false);
+  const empresas = empresasPermitidas
+    ? companies.filter((c) => empresasPermitidas.includes(c.id))
+    : companies;
+  const empIds = empresas.map((c) => c.id);
+
+  const nombreDe = (id) => users.find((u) => u.id === id)?.nombre || "Sin asignar";
+  const nombreEmp = (id) => companies.find((c) => c.id === id)?.nombre || "—";
+  const hoy = new Date().toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" });
+
+  const imprimir = () => window.print();
+
+  return (
+    <div>
+      <div className="no-print">
+        <PageHead title="Reporte de estado" sub="Foto actual de las actividades, agrupada por empresa"
+          action={<button style={S.btnPrimary} onClick={() => setGenerado(true)}><FileText size={16} /> Generar reporte</button>} />
+      </div>
+
+      {!generado && <Empty text="Toca 'Generar reporte' para ver el estado actual de todas las actividades." />}
+
+      {generado && (
+        <div style={S.reporteWrap} id="reporte">
+          <div style={S.reporteHead}>
+            <div>
+              <h2 style={S.reporteTitle}>Reporte de estado de actividades</h2>
+              <p style={S.reporteFecha}>Generado el {hoy}</p>
+            </div>
+            <button style={{ ...S.btnSm }} className="no-print" onClick={imprimir}><Download size={14} /> Imprimir / PDF</button>
+          </div>
+
+          {empresas.map((emp) => {
+            const acts = activities.filter((a) => a.companyId === emp.id);
+            const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
+            const sinIniciar = acts.filter((a) => a.progress === 0);
+            if (enProceso.length === 0 && sinIniciar.length === 0) return null;
+            return (
+              <div key={emp.id} style={S.reporteEmp}>
+                <h3 style={S.reporteEmpName}><Building2 size={16} /> {emp.nombre}</h3>
+
+                {renderBloque("En proceso", enProceso, nombreEmp, nombreDe, "var(--amber)")}
+                {renderBloque("Sin iniciar", sinIniciar, nombreEmp, nombreDe, "var(--muted)")}
+              </div>
+            );
+          })}
+          {empIds.every((id) => activities.filter((a) => a.companyId === id && a.progress < 100).length === 0) && (
+            <Empty text="No hay actividades en proceso ni sin iniciar en este momento." />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Renderiza un bloque (En proceso / Sin iniciar) como tabla
+function renderBloque(titulo, lista, nombreEmp, nombreDe, color) {
+  if (lista.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 6px" }}>
+        <span style={{ width: 10, height: 10, borderRadius: 5, background: color, display: "inline-block" }} />
+        <b style={{ fontSize: 14 }}>{titulo}</b>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>({lista.length})</span>
+      </div>
+      <table style={S.reporteTable}>
+        <thead>
+          <tr>
+            <th style={S.reporteTh}>Actividad</th>
+            <th style={S.reporteTh}>Empresa</th>
+            <th style={{ ...S.reporteTh, textAlign: "center", width: 70 }}>Avance</th>
+            <th style={S.reporteTh}>Responsable</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lista.map((a) => (
+            <tr key={a.id}>
+              <td style={S.reporteTd}>{a.altaPrioridad && !a.prioridadTerminada ? "🔴 " : ""}{a.title}</td>
+              <td style={S.reporteTd}>{nombreEmp(a.companyId)}</td>
+              <td style={{ ...S.reporteTd, textAlign: "center", fontWeight: 700 }}>{a.progress}%</td>
+              <td style={S.reporteTd}>{nombreDe(a.assignedTo)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function DashboardSupervision({ activities, companies, users, profile, reload, empresasSup, onOpen }) {
   const [creando, setCreando] = useState(null); // empresa donde crear
   const especialistas = users.filter((u) => esEspecialista(u));
@@ -2251,6 +2418,8 @@ function MemberApp({ profile }) {
   const empresasSup = profile.empresas_supervisa || [];
   const tieneSupervision = supervisor && empresasSup.length > 0;
   if (tieneSupervision) navItems.push({ id: "supervision", label: "Supervisión", icon: LayoutDashboard });
+  if (tieneSupervision) navItems.push({ id: "buscar", label: "Buscar", icon: FileText });
+  if (tieneSupervision) navItems.push({ id: "reporte", label: "Reporte", icon: FileText });
 
   const especialistas = data.users.filter((u) => esEspecialista(u));
 
@@ -2291,6 +2460,12 @@ function MemberApp({ profile }) {
           {vista === "supervision" && tieneSupervision && (
             <DashboardSupervision activities={data.activities} companies={data.companies} users={data.users}
               profile={profile} reload={data.reload} empresasSup={empresasSup} onOpen={setOpenActId} />
+          )}
+          {vista === "buscar" && tieneSupervision && (
+            <BuscarActividades activities={data.activities} companies={data.companies} users={data.users} onOpen={setOpenActId} empresasPermitidas={empresasSup} />
+          )}
+          {vista === "reporte" && tieneSupervision && (
+            <ReporteEstado activities={data.activities} companies={data.companies} users={data.users} empresasPermitidas={empresasSup} />
           )}
           <Footer />
         </main>
@@ -2601,6 +2776,15 @@ const S = {
   supProgBar: { width: "100%", height: 6, background: "var(--line)", borderRadius: 3, overflow: "hidden" },
   supProgFill: { height: "100%", borderRadius: 3 },
   supProgPct: { fontSize: 11, fontWeight: 700, color: "var(--text)" },
+  reporteWrap: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 14, padding: 20 },
+  reporteHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, borderBottom: "2px solid var(--accent)", paddingBottom: 12, marginBottom: 16, flexWrap: "wrap" },
+  reporteTitle: { margin: 0, fontSize: 20, fontWeight: 800, color: "var(--text)" },
+  reporteFecha: { margin: "2px 0 0", fontSize: 13, color: "var(--muted)" },
+  reporteEmp: { marginBottom: 24 },
+  reporteEmpName: { display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 700, color: "var(--accent)", margin: "0 0 8px", paddingBottom: 6, borderBottom: "1px solid var(--line)" },
+  reporteTable: { width: "100%", borderCollapse: "collapse", fontSize: 13.5 },
+  reporteTh: { textAlign: "left", padding: "8px 10px", background: "var(--bg)", color: "var(--muted)", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, borderBottom: "1px solid var(--line)" },
+  reporteTd: { padding: "8px 10px", color: "var(--text)", borderBottom: "1px solid var(--line)", verticalAlign: "top" },
   prioridadBanner: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#f87171", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "6px 10px", borderRadius: 8, marginBottom: 10, letterSpacing: 0.3 },
   pendTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#f87171", background: "rgba(239,68,68,.12)", padding: "3px 9px", borderRadius: 20 },
   obsItem: { background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, fontSize: 13, lineHeight: 1.5 },
@@ -2743,4 +2927,12 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)!important}
 *, *::before, *::after { box-sizing: border-box; }
 * { min-width: 0; }
 img, video, canvas { max-width: 100%; height: auto; }
-h1, h2, h3, h4, p, span, div { overflow-wrap: anywhere; word-break: break-word; }`;
+h1, h2, h3, h4, p, span, div { overflow-wrap: anywhere; word-break: break-word; }
+@media print {
+  body { background: #fff !important; }
+  .no-print, nav, .sidenav, .bottomnav, footer { display: none !important; }
+  #reporte { border: none !important; background: #fff !important; color: #000 !important; padding: 0 !important; }
+  #reporte * { color: #000 !important; }
+  #reporte table, #reporte th, #reporte td { border-color: #ccc !important; }
+  #reporte th { background: #f0f0f0 !important; }
+}`;
