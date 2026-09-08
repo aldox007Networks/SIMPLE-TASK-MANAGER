@@ -272,7 +272,10 @@ function useData(profile) {
     ]);
     setUsers(u.data || []);
     setCompanies(c.data || []);
-    setActivities((a.data || []).map(normalizeActivity));
+    // Las actividades personales solo las ve su creador; se filtran para todos los demás
+    const todas = (a.data || []).map(normalizeActivity);
+    const visibles = todas.filter((act) => !act.esPersonal || act.createdBy === profile.id);
+    setActivities(visibles);
 
     const nuevas = n.data || [];
     const noLeidas = nuevas.filter((x) => !x.leida);
@@ -311,6 +314,7 @@ function normalizeActivity(a) {
     altaPrioridad: a.alta_prioridad, enterado: a.enterado, enteradoEn: a.enterado_en,
     prioridadTerminada: a.prioridad_terminada, prioridadTerminadaEn: a.prioridad_terminada_en,
     vbTerminacion: a.vb_terminacion, vbTerminacionEn: a.vb_terminacion_en,
+    esPersonal: a.es_personal,
     mensajeGracias: a.mensaje_gracias,
     updates: (a.avances || []).map((u) => ({
       id: u.id, by: u.autor_id, text: u.texto, photos: u.fotos || [], pct: u.progreso, ts: u.creado,
@@ -346,6 +350,7 @@ const Api = {
       fecha_programada: data.fechaProgramada || null,
       serie_id: data.serieId || null,
       alta_prioridad: data.altaPrioridad || false,
+      es_personal: data.esPersonal || false,
     }).select().single();
     return row;
   },
@@ -854,15 +859,15 @@ function AdminActivities({ activities, setOpenActId, openActId, companies, users
         {visibles.map((a) => <ActivityCard key={a.id} a={a} companies={companies} users={users} onClick={() => setOpenActId(a.id)} />)}
       </div>
       {creating && (
-        <ActivityForm companies={companies} members={asignables} onClose={() => setCreating(false)}
+        <ActivityForm companies={companies} members={asignables} adminSelfId={profile.id} onClose={() => setCreating(false)}
           onSave={async (data) => {
             const row = await Api.createActivity(data, profile.id);
-            if (row && data.assignedTo !== profile.id) {
-              if (data.altaPrioridad) await Api.pushNotif(data.assignedTo, `🔴 ALTA PRIORIDAD: "${data.title}" — atiéndela cuanto antes`, row.id, "prioridad");
-              else await Api.pushNotif(data.assignedTo, `Nueva actividad asignada: "${data.title}"`, row.id, "assign");
-            }
-            // Avisar a los supervisores de esa empresa (menos al responsable y a quien la creó)
-            if (row) {
+            // Si es personal, no se notifica a nadie (es privada del admin)
+            if (row && !data.esPersonal) {
+              if (data.assignedTo !== profile.id) {
+                if (data.altaPrioridad) await Api.pushNotif(data.assignedTo, `🔴 ALTA PRIORIDAD: "${data.title}" — atiéndela cuanto antes`, row.id, "prioridad");
+                else await Api.pushNotif(data.assignedTo, `Nueva actividad asignada: "${data.title}"`, row.id, "assign");
+              }
               const emp = companies.find((c) => c.id === data.companyId);
               await Api.notificarSupervisores(data.companyId, `Nueva actividad en ${emp?.nombre || "una empresa"}: "${data.title}"`, row.id, [data.assignedTo, profile.id]);
             }
@@ -896,6 +901,7 @@ function ActivityCard({ a, companies, users, onClick }) {
         <StatusPill status={status} />
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {a.periodicidad && <span style={S.recurTag}><Clock size={11} /> {periodoLabel(a.periodicidad)}</span>}
+          {a.esPersonal && <span style={S.personalTag}><Shield size={11} /> Personal</span>}
           {a.vbTerminacion && <span style={S.okTag}><Check size={11} /> V°B° terminación</span>}
           {a.approvalRequested && <span style={S.approvalTag}><ThumbsUp size={11} /> V°B° pendiente</span>}
         </div>
@@ -932,7 +938,7 @@ function fmtFecha(f) {
 }
 
 // ============ FORM ACTIVIDAD ============
-function ActivityForm({ companies, members, onClose, onSave, initial }) {
+function ActivityForm({ companies, members, onClose, onSave, initial, adminSelfId }) {
   const [title, setTitle] = useState(initial?.title || "");
   const [description, setDescription] = useState(initial?.description || "");
   const [companyId, setCompanyId] = useState(initial?.companyId || companies[0]?.id || "");
@@ -941,6 +947,7 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
   const [periodicidad, setPeriodicidad] = useState(initial?.periodicidad || "");
   const [altaPrioridad, setAltaPrioridad] = useState(initial?.altaPrioridad || false);
   const [fechaProgramada, setFechaProgramada] = useState(initial?.fechaProgramada || "");
+  const [esPersonal, setEsPersonal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [photoErr, setPhotoErr] = useState("");
@@ -1016,11 +1023,36 @@ function ActivityForm({ companies, members, onClose, onSave, initial }) {
         </p>
       )}
 
+      {adminSelfId && (
+        <>
+          <div style={{ borderTop: "1px solid var(--line)", margin: "16px 0 12px" }} />
+          <label style={{ ...S.vbCheck, cursor: "pointer" }} onClick={() => setEsPersonal((v) => !v)}>
+            <input type="checkbox" checked={esPersonal} onChange={(e) => setEsPersonal(e.target.checked)} style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+            <span style={{ color: esPersonal ? "var(--accent)" : "var(--text)", fontWeight: 700 }}>
+              <Shield size={14} style={{ verticalAlign: "middle", marginRight: 4 }} /> Actividad personal (solo para mí)
+            </span>
+          </label>
+          {esPersonal && (
+            <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+              Se te asignará a ti y <b>solo tú podrás verla</b>. No aparecerá para nadie más ni en reportes o tableros de supervisión.
+            </p>
+          )}
+        </>
+      )}
+
       <div style={S.modalActions}>
         <button style={S.btnGhost} onClick={onClose}>Cancelar</button>
-        <button style={S.btnPrimary} disabled={!title.trim() || !companyId || !assignedTo || saving || busy}
-          onClick={async () => { setSaving(true); await onSave({ title: title.trim(), description: description.trim(), companyId, assignedTo, photos, periodicidad, fechaProgramada, altaPrioridad }); }}>
-          {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : "Crear y asignar"}
+        <button style={S.btnPrimary} disabled={!title.trim() || !companyId || (!assignedTo && !esPersonal) || saving || busy}
+          onClick={async () => {
+            setSaving(true);
+            await onSave({
+              title: title.trim(), description: description.trim(), companyId,
+              assignedTo: esPersonal ? adminSelfId : assignedTo,
+              photos, periodicidad, fechaProgramada, altaPrioridad,
+              esPersonal,
+            });
+          }}>
+          {saving ? "Guardando…" : esEdicion ? "Guardar cambios" : (esPersonal ? "Crear actividad personal" : "Crear y asignar")}
         </button>
       </div>
     </Modal>
@@ -2229,7 +2261,7 @@ function ReporteEstado({ activities, companies, users, empresasPermitidas }) {
           </div>
 
           {empresasReporte.map((emp) => {
-            const acts = activities.filter((a) => a.companyId === emp.id);
+            const acts = activities.filter((a) => a.companyId === emp.id && !a.esPersonal);
             const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
             const sinIniciar = acts.filter((a) => a.progress === 0);
             if (enProceso.length === 0 && sinIniciar.length === 0) return null;
@@ -2322,7 +2354,7 @@ function DashboardSupervision({ activities, companies, users, profile, reload, e
 
       {/* Una sección por empresa */}
       {misEmpresas.map((emp) => {
-        const acts = activities.filter((a) => a.companyId === emp.id);
+        const acts = activities.filter((a) => a.companyId === emp.id && !a.esPersonal);
         const porIniciar = acts.filter((a) => a.progress === 0);
         const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
         const terminadas = acts.filter((a) => a.progress >= 100);
@@ -2782,6 +2814,7 @@ const S = {
   pill: { fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 20, border: "1px solid", letterSpacing: .3 },
   approvalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--amber)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
   recurTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#60a5fa", background: "rgba(96,165,250,.12)", padding: "3px 9px", borderRadius: 20 },
+  personalTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "var(--accent)", background: "rgba(245,158,11,.12)", padding: "3px 9px", borderRadius: 20 },
   supEmpBlock: { background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 16, padding: 16, marginBottom: 16 },
   supEmpHead: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" },
   supEmpIcon: { width: 38, height: 38, borderRadius: 10, background: "rgba(245,158,11,.12)", color: "var(--accent)", display: "grid", placeItems: "center", flexShrink: 0 },
