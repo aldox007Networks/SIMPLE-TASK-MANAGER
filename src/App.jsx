@@ -2185,10 +2185,10 @@ function BuscarActividades({ activities, companies, users, onOpen, empresasPermi
 // ============ REPORTE DE ESTADO (Admin y Supervisores) ============
 function ReporteEstado({ activities, companies, users, empresasPermitidas }) {
   const [generado, setGenerado] = useState(false);
+  const [empresaSel, setEmpresaSel] = useState(""); // "" = general (todas)
   const empresas = empresasPermitidas
     ? companies.filter((c) => empresasPermitidas.includes(c.id))
     : companies;
-  const empIds = empresas.map((c) => c.id);
 
   const nombreDe = (id) => users.find((u) => u.id === id)?.nombre || "Sin asignar";
   const nombreEmp = (id) => companies.find((c) => c.id === id)?.nombre || "—";
@@ -2196,26 +2196,38 @@ function ReporteEstado({ activities, companies, users, empresasPermitidas }) {
 
   const imprimir = () => window.print();
 
+  // Empresas a incluir según selección: una sola, o todas (general)
+  const empresasReporte = empresaSel ? empresas.filter((c) => c.id === empresaSel) : empresas;
+  const esGeneral = !empresaSel;
+  const tituloReporte = esGeneral ? "Reporte General de actividades" : `Reporte de ${nombreEmp(empresaSel)}`;
+
   return (
     <div>
       <div className="no-print">
-        <PageHead title="Reporte de estado" sub="Foto actual de las actividades, agrupada por empresa"
-          action={<button style={S.btnPrimary} onClick={() => setGenerado(true)}><FileText size={16} /> Generar reporte</button>} />
+        <PageHead title="Reporte General" sub="Foto actual de las actividades, agrupada por empresa" />
+        <label style={S.label}>Empresa</label>
+        <select style={S.select} value={empresaSel} onChange={(e) => { setEmpresaSel(e.target.value); setGenerado(false); }}>
+          <option value="">Todas las empresas (Reporte General)</option>
+          {empresas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+        <button style={{ ...S.btnPrimary, marginTop: 12, width: "100%", justifyContent: "center" }} onClick={() => setGenerado(true)}>
+          <FileText size={16} /> Generar reporte
+        </button>
       </div>
 
-      {!generado && <Empty text="Toca 'Generar reporte' para ver el estado actual de todas las actividades." />}
+      {!generado && <Empty text="Elige una empresa (o deja 'Todas') y toca 'Generar reporte'." />}
 
       {generado && (
-        <div style={S.reporteWrap} id="reporte">
+        <div style={{ ...S.reporteWrap, marginTop: 16 }} id="reporte">
           <div style={S.reporteHead}>
             <div>
-              <h2 style={S.reporteTitle}>Reporte de estado de actividades</h2>
+              <h2 style={S.reporteTitle}>{tituloReporte}</h2>
               <p style={S.reporteFecha}>Generado el {hoy}</p>
             </div>
             <button style={{ ...S.btnSm }} className="no-print" onClick={imprimir}><Download size={14} /> Imprimir / PDF</button>
           </div>
 
-          {empresas.map((emp) => {
+          {empresasReporte.map((emp) => {
             const acts = activities.filter((a) => a.companyId === emp.id);
             const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
             const sinIniciar = acts.filter((a) => a.progress === 0);
@@ -2223,13 +2235,12 @@ function ReporteEstado({ activities, companies, users, empresasPermitidas }) {
             return (
               <div key={emp.id} style={S.reporteEmp}>
                 <h3 style={S.reporteEmpName}><Building2 size={16} /> {emp.nombre}</h3>
-
                 {renderBloque("En proceso", enProceso, nombreEmp, nombreDe, "var(--amber)")}
                 {renderBloque("Sin iniciar", sinIniciar, nombreEmp, nombreDe, "var(--muted)")}
               </div>
             );
           })}
-          {empIds.every((id) => activities.filter((a) => a.companyId === id && a.progress < 100).length === 0) && (
+          {empresasReporte.every((emp) => activities.filter((a) => a.companyId === emp.id && a.progress < 100).length === 0) && (
             <Empty text="No hay actividades en proceso ni sin iniciar en este momento." />
           )}
         </div>
@@ -2238,7 +2249,7 @@ function ReporteEstado({ activities, companies, users, empresasPermitidas }) {
   );
 }
 
-// Renderiza un bloque (En proceso / Sin iniciar) como tabla
+// Renderiza un bloque (En proceso / Sin iniciar) como tabla, con descripción
 function renderBloque(titulo, lista, nombreEmp, nombreDe, color) {
   if (lista.length === 0) return null;
   return (
@@ -2260,7 +2271,10 @@ function renderBloque(titulo, lista, nombreEmp, nombreDe, color) {
         <tbody>
           {lista.map((a) => (
             <tr key={a.id}>
-              <td style={S.reporteTd}>{a.altaPrioridad && !a.prioridadTerminada ? "🔴 " : ""}{a.title}</td>
+              <td style={S.reporteTd}>
+                <div style={{ fontWeight: 600 }}>{a.altaPrioridad && !a.prioridadTerminada ? "🔴 " : ""}{a.title}</div>
+                {a.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3, lineHeight: 1.4 }}>{a.description}</div>}
+              </td>
               <td style={S.reporteTd}>{nombreEmp(a.companyId)}</td>
               <td style={{ ...S.reporteTd, textAlign: "center", fontWeight: 700 }}>{a.progress}%</td>
               <td style={S.reporteTd}>{nombreDe(a.assignedTo)}</td>
