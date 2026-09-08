@@ -173,6 +173,7 @@ export default function App() {
 
   useEffect(() => {
     registerPushSW();
+    document.title = "iTask";
     // Desbloquear el audio de la alarma en la primera interacción del usuario
     const desbloquear = () => { desbloquearAudio(); };
     window.addEventListener("pointerdown", desbloquear, { once: true });
@@ -546,7 +547,7 @@ function TopBar({ profile, notifs, onLogout, activities, onOpenActivity, reload 
   };
 
   return (
-    <div style={S.topbar}>
+    <div style={S.topbar} className="no-print">
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <img src="/icono-512.png" alt="iTask" style={S.logoMarkSm} />
         <div>
@@ -655,7 +656,7 @@ function AdminApp({ profile }) {
         </nav>
         <main style={S.main} className="main">
           {tab !== "dash" && !openActId && (
-            <button style={S.backBtn} onClick={() => setTab("dash")}>
+            <button style={S.backBtn} className="no-print" onClick={() => setTab("dash")}>
               <ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver al panel
             </button>
           )}
@@ -2260,11 +2261,17 @@ function renderBloque(titulo, lista, nombreEmp, nombreDe, color) {
         <span style={{ fontSize: 12, color: "var(--muted)" }}>({lista.length})</span>
       </div>
       <table style={S.reporteTable}>
+        <colgroup>
+          <col style={{ width: "50%" }} />
+          <col style={{ width: "20%" }} />
+          <col style={{ width: "12%" }} />
+          <col style={{ width: "18%" }} />
+        </colgroup>
         <thead>
           <tr>
             <th style={S.reporteTh}>Actividad</th>
             <th style={S.reporteTh}>Empresa</th>
-            <th style={{ ...S.reporteTh, textAlign: "center", width: 70 }}>Avance</th>
+            <th style={{ ...S.reporteTh, textAlign: "center" }}>Avance</th>
             <th style={S.reporteTh}>Responsable</th>
           </tr>
         </thead>
@@ -2275,9 +2282,9 @@ function renderBloque(titulo, lista, nombreEmp, nombreDe, color) {
                 <div style={{ fontWeight: 600 }}>{a.altaPrioridad && !a.prioridadTerminada ? "🔴 " : ""}{a.title}</div>
                 {a.description && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3, lineHeight: 1.4 }}>{a.description}</div>}
               </td>
-              <td style={S.reporteTd}>{nombreEmp(a.companyId)}</td>
+              <td style={S.reporteTdWrap}>{nombreEmp(a.companyId)}</td>
               <td style={{ ...S.reporteTd, textAlign: "center", fontWeight: 700 }}>{a.progress}%</td>
-              <td style={S.reporteTd}>{nombreDe(a.assignedTo)}</td>
+              <td style={S.reporteTdWrap}>{nombreDe(a.assignedTo)}</td>
             </tr>
           ))}
         </tbody>
@@ -2796,9 +2803,10 @@ const S = {
   reporteFecha: { margin: "2px 0 0", fontSize: 13, color: "var(--muted)" },
   reporteEmp: { marginBottom: 24 },
   reporteEmpName: { display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 700, color: "var(--accent)", margin: "0 0 8px", paddingBottom: 6, borderBottom: "1px solid var(--line)" },
-  reporteTable: { width: "100%", borderCollapse: "collapse", fontSize: 13.5 },
+  reporteTable: { width: "100%", borderCollapse: "collapse", fontSize: 13.5, tableLayout: "fixed" },
   reporteTh: { textAlign: "left", padding: "8px 10px", background: "var(--bg)", color: "var(--muted)", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, borderBottom: "1px solid var(--line)" },
   reporteTd: { padding: "8px 10px", color: "var(--text)", borderBottom: "1px solid var(--line)", verticalAlign: "top" },
+  reporteTdWrap: { padding: "8px 10px", color: "var(--text)", borderBottom: "1px solid var(--line)", verticalAlign: "top", overflowWrap: "normal", wordBreak: "normal", whiteSpace: "normal" },
   prioridadBanner: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "#f87171", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "6px 10px", borderRadius: 8, marginBottom: 10, letterSpacing: 0.3 },
   pendTag: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#f87171", background: "rgba(239,68,68,.12)", padding: "3px 9px", borderRadius: 20 },
   obsItem: { background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginBottom: 8, fontSize: 13, lineHeight: 1.5 },
@@ -2949,4 +2957,8 @@ h1, h2, h3, h4, p, span, div { overflow-wrap: anywhere; word-break: break-word; 
   #reporte * { color: #000 !important; }
   #reporte table, #reporte th, #reporte td { border-color: #ccc !important; }
   #reporte th { background: #f0f0f0 !important; }
-}`;
+  #reporte th, #reporte td { word-break: normal !important; overflow-wrap: normal !important; }
+  #reporte table { table-layout: fixed !important; }
+}
+/* Fuera de impresión también: que los encabezados y celdas del reporte no partan palabras */
+#reporte th, #reporte td { word-break: normal; overflow-wrap: normal; }`;
