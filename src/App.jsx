@@ -102,6 +102,20 @@ const MENSAJES_GRACIAS = [
 ];
 const mensajeGracias = () => MENSAJES_GRACIAS[Math.floor(Math.random() * MENSAJES_GRACIAS.length)];
 
+// Mensajes motivantes de recordatorio de avance (manual, enviado por el admin)
+const MENSAJES_RECORD_MANUAL = [
+  (t) => `👋 ¡Hola! ¿Cómo va la actividad "${t}"? Cuando puedas, cuéntanos tu avance. ¡Gracias por tu trabajo!`,
+  (t) => `💪 Recuerda reportar cómo vas con "${t}". Tu avance ayuda a todo el equipo a estar al día.`,
+  (t) => `✨ ¿Ya avanzaste en "${t}"? Comparte tu progreso cuando tengas un momento. ¡Vamos con todo!`,
+];
+// Mensajes motivantes de recordatorio automático (48h sin avance)
+const MENSAJES_RECORD_AUTO = [
+  (t) => `🌟 Han pasado un par de días desde "${t}". Cuando puedas, déjanos saber cómo va. ¡Cuentas con el equipo!`,
+  (t) => `😊 Un recordatorio amable: "${t}" está esperando tu reporte de avance. Sin prisa, pero no la pierdas de vista.`,
+  (t) => `🚀 ¿Cómo vas con "${t}"? Reportar tu avance nos ayuda a apoyarte si lo necesitas. ¡Gracias!`,
+];
+const mensajeRecordManual = (t) => MENSAJES_RECORD_MANUAL[Math.floor(Math.random() * MENSAJES_RECORD_MANUAL.length)](t);
+
 // Duración en horas entre dos fechas (o null si falta alguna)
 function horasEntre(inicio, fin) {
   if (!inicio || !fin) return null;
@@ -1186,6 +1200,7 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
   const [busyRej, setBusyRej] = useState(false);
   const [editandoAvance, setEditandoAvance] = useState(null); // id del avance en edición
   const [editandoActividad, setEditandoActividad] = useState(false); // modal editar actividad (admin)
+  const [recordEnviado, setRecordEnviado] = useState(false);
   const [editTexto, setEditTexto] = useState("");
   const [editFotos, setEditFotos] = useState([]);
   const [editBusy, setEditBusy] = useState(false);
@@ -1259,7 +1274,16 @@ function ActivityDetail({ activity: a, companies, users, profile, reload, isAdmi
       <div style={S.detailTopBar} className="detailtopbar">
         <button style={S.backBtn} onClick={onBack}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Volver</button>
         {isAdmin && (
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+            {a.progress < 100 && a.assignedTo && a.assignedTo !== profile.id && (
+              <button style={S.btnRecordar} onClick={async () => {
+                await Api.pushNotif(a.assignedTo, mensajeRecordManual(a.title), a.id, "recordatorio");
+                setRecordEnviado(true);
+                setTimeout(() => setRecordEnviado(false), 3000);
+              }} disabled={recordEnviado}>
+                <Bell size={14} /> {recordEnviado ? "¡Enviado!" : "Recordar avance"}
+              </button>
+            )}
             <button style={S.btnGhost} onClick={() => setEditandoActividad(true)}><Pencil size={14} /> Editar</button>
             <button style={S.btnDanger} onClick={async () => {
               if (confirm("¿Desea eliminar esta actividad? Esta acción no se puede deshacer.")) {
@@ -2821,6 +2845,7 @@ const S = {
   iconBtnSm: { width: 32, height: 32, borderRadius: 8, background: "transparent", border: "1px solid var(--line)", color: "var(--muted)", display: "grid", placeItems: "center", cursor: "pointer" },
   iconBtnXs: { display: "inline-flex", alignItems: "center", gap: 4, height: 26, padding: "0 8px", borderRadius: 6, background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.3)", color: "var(--accent)", cursor: "pointer", marginLeft: "auto", fontSize: 11, fontWeight: 600, fontFamily: "var(--body)" },
   btnDanger: { display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, background: "rgba(220,80,80,.12)", border: "1px solid rgba(220,80,80,.35)", color: "#f87171", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--body)" },
+  btnRecordar: { display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, background: "rgba(96,165,250,.12)", border: "1px solid rgba(96,165,250,.4)", color: "#60a5fa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--body)" },
   detailTopBar: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 4, flexWrap: "wrap" },
   badge: { position: "absolute", top: -5, right: -5, minWidth: 19, height: 19, padding: "0 5px", borderRadius: 10, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 700, display: "grid", placeItems: "center", border: "2px solid var(--surface)", boxSizing: "content-box" },
   notifPanel: { position: "absolute", top: 48, right: 0, width: 320, background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,.5)", zIndex: 100, overflow: "hidden" },
