@@ -2011,14 +2011,21 @@ function ReportarDetalle({ companies, profile, reload }) {
   );
 }
 
-// Admin: revisar detalles y convertirlos en actividad
-function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
-  const [detalles, setDetalles] = useState([]);
+// Admin y Supervisor: revisar detalles y convertirlos en actividad
+// empresasPermitidas: null = todas (admin); array de ids = solo esas (supervisor)
+function DetallesAdmin({ companies, users, profile, reload, onConvertido, empresasPermitidas = null }) {
+  const [detallesTodos, setDetallesTodos] = useState([]);
   const [convirtiendo, setConvirtiendo] = useState(null); // detalle a convertir
   const [filtro, setFiltro] = useState("pendiente");
+  const esSupervisorVista = empresasPermitidas !== null;
 
-  const cargar = async () => setDetalles(await Api.getDetalles());
+  const cargar = async () => setDetallesTodos(await Api.getDetalles());
   useEffect(() => { cargar(); }, []);
+
+  // Si es supervisor, solo los detalles de sus empresas
+  const detalles = esSupervisorVista
+    ? detallesTodos.filter((d) => empresasPermitidas.includes(d.empresa_id))
+    : detallesTodos;
 
   const visibles = detalles.filter((d) => filtro === "todos" ? true : d.estado === filtro);
   const chips = [
@@ -2030,7 +2037,7 @@ function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
 
   return (
     <div>
-      <PageHead title="Detalles reportados" sub="Hallazgos del equipo en recorridos" />
+      <PageHead title="Detalles reportados" sub={esSupervisorVista ? "Hallazgos en tus empresas · conviértelos en actividad" : "Hallazgos del equipo en recorridos"} />
       <div style={S.chipRow}>
         {chips.map((c) => <button key={c.id} style={filtro === c.id ? S.chipActive : S.chip} onClick={() => setFiltro(c.id)}>{c.label}</button>)}
       </div>
@@ -2062,22 +2069,24 @@ function DetallesAdmin({ companies, users, profile, reload, onConvertido }) {
       </div>
 
       {convirtiendo && (
-        <ActivityForm companies={companies} members={[...users.filter((u) => u.rol === "member"), ...users.filter((u) => u.id === profile.id && u.rol === "admin")]}
+        <ActivityForm companies={companies}
+          members={[...users.filter((u) => esEspecialista(u)), ...users.filter((u) => u.id === profile.id)]}
+          adminSelfId={esSupervisorVista ? undefined : profile.id}
           initial={{ title: convirtiendo.titulo, description: convirtiendo.descripcion, companyId: convirtiendo.empresa_id, assignedTo: "", photos: convirtiendo.fotos }}
           onClose={() => setConvirtiendo(null)}
           onSave={async (dataForm) => {
             const row = await Api.createActivity(dataForm, profile.id);
             if (row) {
               await Api.detalleAActividad(convirtiendo, row.id);
-              // No enviar notificación push si el admin se la asignó a sí mismo
+              // No enviar notificación push si quien convierte se la asignó a sí mismo
               if (dataForm.assignedTo !== profile.id) {
                 await Api.pushNotif(dataForm.assignedTo, `Nueva actividad asignada: "${dataForm.title}"`, row.id, "assign");
               }
-              // Avisar a los supervisores de esa empresa
+              // Avisar a los supervisores de esa empresa (no al que convierte ni al responsable)
               const emp = companies.find((c) => c.id === dataForm.companyId);
               await Api.notificarSupervisores(dataForm.companyId, `Nueva actividad en ${emp?.nombre || "una empresa"}: "${dataForm.title}"`, row.id, [dataForm.assignedTo, profile.id]);
             }
-            setConvirtiendo(null); cargar(); reload();
+            setConvirtiendo(null); cargar(); reload(); if (onConvertido) onConvertido();
           }} />
       )}
     </div>
@@ -2554,6 +2563,7 @@ function MemberApp({ profile }) {
   const empresasSup = profile.empresas_supervisa || [];
   const tieneSupervision = supervisor && empresasSup.length > 0;
   if (tieneSupervision) navItems.push({ id: "supervision", label: "Supervisión", icon: LayoutDashboard });
+  if (tieneSupervision) navItems.push({ id: "revisar-detalles", label: "Hallazgos", icon: AlertCircle });
   if (tieneSupervision) navItems.push({ id: "buscar", label: "Buscar", icon: FileText });
   if (tieneSupervision) navItems.push({ id: "reporte", label: "Reporte", icon: FileText });
 
@@ -2596,6 +2606,9 @@ function MemberApp({ profile }) {
           {vista === "supervision" && tieneSupervision && (
             <DashboardSupervision activities={data.activities} companies={data.companies} users={data.users}
               profile={profile} reload={data.reload} empresasSup={empresasSup} onOpen={setOpenActId} />
+          )}
+          {vista === "revisar-detalles" && tieneSupervision && (
+            <DetallesAdmin companies={data.companies} users={data.users} profile={profile} reload={data.reload} empresasPermitidas={empresasSup} />
           )}
           {vista === "buscar" && tieneSupervision && (
             <BuscarActividades activities={data.activities} companies={data.companies} users={data.users} onOpen={setOpenActId} empresasPermitidas={empresasSup} />
