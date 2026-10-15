@@ -2419,9 +2419,11 @@ function renderBloque(titulo, lista, nombreEmp, nombreDe, color) {
 
 function DashboardSupervision({ activities, companies, users, profile, reload, empresasSup, onOpen }) {
   const [creando, setCreando] = useState(null); // empresa donde crear
+  const [vistaTerm, setVistaTerm] = useState("activas"); // activas | terminadas
   const especialistas = users.filter((u) => esEspecialista(u));
   // Solo las empresas que este supervisor tiene asignadas
   const misEmpresas = companies.filter((c) => empresasSup.includes(c.id));
+  const terminada = (a) => a.progress >= 100;
 
   return (
     <div>
@@ -2442,14 +2444,29 @@ function DashboardSupervision({ activities, companies, users, profile, reload, e
         );
       })()}
 
+      {/* Filtro: activas (por defecto) vs terminadas */}
+      {(() => {
+        const todas = activities.filter((a) => empresasSup.includes(a.companyId) && !a.esPersonal);
+        const nActivas = todas.filter((a) => !terminada(a)).length;
+        const nTerm = todas.filter(terminada).length;
+        return (
+          <div style={S.chipRow}>
+            <button style={vistaTerm === "activas" ? S.chipActive : S.chip} onClick={() => setVistaTerm("activas")}>En curso ({nActivas})</button>
+            <button style={vistaTerm === "terminadas" ? S.chipActive : S.chip} onClick={() => setVistaTerm("terminadas")}>Terminadas ({nTerm})</button>
+          </div>
+        );
+      })()}
+
       {misEmpresas.length === 0 && <Empty text="No tienes empresas asignadas para supervisar. Pídele al administrador que te las asigne." />}
 
       {/* Una sección por empresa */}
       {misEmpresas.map((emp) => {
-        const acts = activities.filter((a) => a.companyId === emp.id && !a.esPersonal);
-        const porIniciar = acts.filter((a) => a.progress === 0);
-        const enProceso = acts.filter((a) => a.progress > 0 && a.progress < 100);
-        const terminadas = acts.filter((a) => a.progress >= 100);
+        const todas = activities.filter((a) => a.companyId === emp.id && !a.esPersonal);
+        const porIniciar = todas.filter((a) => a.progress === 0);
+        const enProceso = todas.filter((a) => a.progress > 0 && a.progress < 100);
+        const terminadas = todas.filter(terminada);
+        // Según el filtro, qué se lista en esta empresa
+        const listadas = vistaTerm === "terminadas" ? terminadas : [...enProceso, ...porIniciar];
         return (
           <div key={emp.id} style={S.supEmpBlock}>
             <div style={S.supEmpHead}>
@@ -2457,10 +2474,10 @@ function DashboardSupervision({ activities, companies, users, profile, reload, e
                 <div style={S.supEmpIcon}><Building2 size={18} /></div>
                 <div>
                   <h3 style={S.supEmpName}>{emp.nombre}</h3>
-                  <span style={S.supEmpCount}>{acts.length} actividad{acts.length !== 1 ? "es" : ""}</span>
+                  <span style={S.supEmpCount}>{todas.length} actividad{todas.length !== 1 ? "es" : ""}</span>
                 </div>
               </div>
-              <button style={S.btnSm} onClick={() => setCreando(emp)}><Plus size={14} /> Nueva</button>
+              {vistaTerm === "activas" && <button style={S.btnSm} onClick={() => setCreando(emp)}><Plus size={14} /> Nueva</button>}
             </div>
 
             {/* Mini-resumen de la empresa */}
@@ -2470,12 +2487,12 @@ function DashboardSupervision({ activities, companies, users, profile, reload, e
               <span style={S.supStat}><span style={{ ...S.supDot, background: "var(--green)" }} /> Terminadas: <b>{terminadas.length}</b></span>
             </div>
 
-            {acts.length === 0 && <Empty text="Sin actividades en esta empresa." mini />}
+            {listadas.length === 0 && <Empty text={vistaTerm === "terminadas" ? "Sin actividades terminadas aún." : "Sin actividades en curso."} mini />}
 
             {/* Lista compacta de actividades con estado, avance y responsable */}
-            {acts.length > 0 && (
+            {listadas.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-                {[...enProceso, ...porIniciar, ...terminadas].map((a) => {
+                {listadas.map((a) => {
                   const who = users.find((u) => u.id === a.assignedTo);
                   const estado = a.progress >= 100 ? "Terminada" : a.progress > 0 ? "En proceso" : "Por iniciar";
                   const color = a.progress >= 100 ? "var(--green)" : a.progress > 0 ? "var(--amber)" : "var(--muted)";
